@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct VideoSummary {
     pub id: String,
     pub title: String,
@@ -11,6 +11,8 @@ pub struct VideoSummary {
     pub duration_seconds: Option<u64>,
     pub is_short: bool,
     pub verified_channel: bool,
+    pub has_captions: bool,
+    pub description_snippet: Option<String>,
     pub views_per_hour: Option<f64>,
 }
 
@@ -58,6 +60,13 @@ impl ChannelInfo {
         let videos = if short { &self.recent_shorts } else { &self.recent_videos };
         (videos.iter().filter(|v| v.views.is_some()).count() >= 3).then(|| crate::metrics::median_views(videos)).flatten()
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ChannelAbout {
+    pub total_views: Option<u64>,
+    pub country: Option<String>,
+    pub joined: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

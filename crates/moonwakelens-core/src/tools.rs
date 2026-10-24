@@ -44,7 +44,7 @@ pub async fn call(engine: &Engine, name: &str, args: &Value) -> Result<Value> {
             to_value(engine.discover(text("query")?, preset).await?)?
         }
         "keyword_research" => to_value(engine.keyword_research(text("seed")?, number("limit", 20).min(60), args.get("deep").and_then(Value::as_bool).unwrap_or(false)).await?)?,
-        "keyword_score" => to_value(engine.keyword_score(text("keyword")?, true).await?)?,
+        "keyword_score" => to_value(engine.keyword_score(text("keyword")?).await?)?,
         "video_report" => to_value(engine.video_report(text("video")?).await?)?,
         "channel_audit" => to_value(engine.channel_audit(text("channel")?).await?)?,
         "tag_suggestions" => to_value(engine.tag_suggestions(text("keyword")?, number("limit", 30)).await?)?,

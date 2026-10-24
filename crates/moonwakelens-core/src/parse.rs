@@ -122,6 +122,14 @@ pub fn normalize(text: &str) -> String {
     text.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub fn is_noise_keyword(keyword: &str) -> bool {
+    keyword.split_whitespace().any(|w| {
+        let letters = w.chars().filter(|c| c.is_alphabetic()).count();
+        let digits = w.chars().filter(|c| c.is_ascii_digit()).count();
+        w.len() >= 6 && letters > 0 && digits >= 2
+    })
+}
+
 pub fn hashtags(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for word in text.split_whitespace().filter(|w| w.starts_with('#') && w.len() > 1) {
@@ -190,5 +198,7 @@ mod tests {
         assert_eq!(video_id("https://www.youtube.com/watch?v=jNQXAC9IVRw&t=4").as_deref(), Some("jNQXAC9IVRw"));
         assert_eq!(video_id("https://youtube.com/shorts/k49vd5QxfJc").as_deref(), Some("k49vd5QxfJc"));
         assert_eq!(split_keywords("\"Roblox development\" roblox \"how to\""), vec!["Roblox development", "roblox", "how to"]);
+        assert!(is_noise_keyword("roblox horror game thekacperosen fk39uy3nxxo"));
+        assert!(!is_noise_keyword("roblox horror games 2026"));
     }
 }

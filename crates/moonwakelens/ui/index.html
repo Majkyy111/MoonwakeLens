@@ -74,10 +74,11 @@ h2 .ghost { font-size: 12px; margin-left: 8px; vertical-align: middle; }
 .pill { font-weight: 700; padding: 2px 8px; border-radius: 6px; font-size: 12px; }
 .good { --c: var(--good); color: var(--good); } .mid { --c: var(--mid); color: var(--mid); } .bad { --c: var(--bad); color: var(--bad); }
 .pill.good { background: #2fd39b1f; } .pill.mid { background: #f5b84b1f; } .pill.bad { background: #f2667a1f; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 12px; margin-bottom: 8px; }
 .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
 .tile span { color: var(--muted); font-size: 12px; font-weight: 600; }
-.tile b { display: block; font-size: 22px; margin-top: 2px; }
+.tile b { display: block; font-size: 22px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile b small { font-size: 13px; color: var(--muted); }
 .hero { display: flex; gap: 18px; align-items: center; margin-bottom: 18px; }
 .hero img { width: 240px; border-radius: 12px; }
 .hero h3 { margin: 0 0 6px; font-size: 18px; }
@@ -211,7 +212,7 @@ function card(v) {
     <div class="thumb${v.is_short ? " short" : ""}"><img loading="lazy" src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="">${multiple}
       ${v.is_short ? '<span class="kind">Short</span>' : ""}${v.duration_seconds && !v.is_short ? `<span class="dur">${clock(v.duration_seconds)}</span>` : ""}</div>
     <div class="meta"><div class="title">${esc(v.title)}</div><div class="chan">${esc(v.channel_name || "")}</div>
-      <div class="stats"><span><b>${num(v.views)}</b> views</span><span class="vph"><b>${num(v.views_per_hour)}</b>/hour</span><span>${ago(v.age_hours)} ago</span></div></div></a>`;
+      <div class="stats"><span><b>${num(v.views)}</b> views</span>${v.views_per_hour == null ? "" : `<span class="vph"><b>${num(v.views_per_hour)}</b>/hour</span>`}${v.age_hours == null ? "" : `<span>${ago(v.age_hours)} ago</span>`}</div></div></a>`;
 }
 
 const views = {
@@ -245,12 +246,14 @@ const views = {
       <div class="tiles">${tiles.map(([k, val]) => `<div class="tile"><span>${k}</span><b>${val}</b></div>`).join("")}</div>
       <h2>Tags and where this video ranks for them</h2>
       <div class="chips">${r.tag_ranks.map(t => `<span class="chip">${esc(t.tag)}<small>${t.rank ? "#" + t.rank : "not in top 20"}</small></span>`).join("") || '<span class="sub">No tags</span>'}${v.tags.slice(8).map(t => `<span class="chip">${esc(t)}</span>`).join("")}</div>
+      <h2>Channel tags</h2><div class="chips">${r.channel_tags.map(t => `<span class="chip">${esc(t)}</span>`).join("") || '<span class="sub">No channel tags</span>'}</div>
       ${seoBlock(r.seo)}`;
   },
   async channel(form) {
     const a = await api("channel_audit", {channel: form.channel.value});
     const c = a.channel;
-    const tiles = [["Subscribers", num(c.subscribers)], ["Videos", num(c.video_count)], ["Median video views", num(a.median_views)], ["Median Short views", num(a.median_short_views)], ["Average video views", num(a.average_views)], ["Videos / week", a.uploads_per_week?.toFixed(1) ?? "–"], ["Last video", ago(a.last_upload_hours) + " ago"]];
+    const tiles = [["Subscribers", num(c.subscribers)], ["Videos", num(c.video_count)], ["Total views", num(a.about.total_views)], ["Views / video", num(a.views_per_video)],
+      ["Country", esc(a.about.country || "–")], ["Joined", esc(a.about.joined || "–")], ["Median video views", num(a.median_views)], ["Median Short views", num(a.median_short_views)], ["Average video views", num(a.average_views)], ["Videos / week", a.uploads_per_week?.toFixed(1) ?? "–"], ["Last video", ago(a.last_upload_hours) + " ago"]];
     const bestFirst = list => [...list].sort((x, y) => (y.outlier_score ?? 0) - (x.outlier_score ?? 0));
     exportRows = [...a.shorts, ...a.videos].map(videoRow);
     return `<div class="hero"><div><h3><a href="https://www.youtube.com/channel/${c.id}" target="_blank">${esc(c.name)}</a></h3><div class="chan">${esc(c.handle || "")}</div></div></div>
@@ -288,10 +291,13 @@ async function keywordDetail(keyword) {
   box.innerHTML = `<div class="status">Reading stats for “${esc(keyword)}”…</div>`;
   try {
     const k = await api("keyword_score", {keyword});
-    const tiles = [["Overall", k.overall], ["Volume", k.volume], ["Competition", k.competition], ["Highest views", num(k.highest_views)], ["Average views", num(k.average_views)],
-      ["Average subscribers", num(k.average_subscribers)], ["Average age", ago(k.average_age_hours)], ["Keyword in title", `${k.in_title}/${k.sample_size}`], ["Last 7 days", `${k.uploaded_last_7_days}/${k.sample_size}`], ["Results", num(k.estimated_results)]];
+    const level = v => v >= 67 ? "High" : v >= 34 ? "Medium" : "Low";
+    const tiles = [["Overall", k.overall], ["Volume", `${k.volume} <small>${level(k.volume)}</small>`], ["Competition", `${k.competition} <small>${level(k.competition)}</small>`], ["Highest views", num(k.highest_views)], ["Average views", num(k.average_views)],
+      ["Average subscribers", num(k.average_subscribers)], ["Average age", ago(k.average_age_hours)], ["In title", `${k.in_title}/${k.sample_size}`], ["In description", `${k.in_description}/${k.sample_size}`],
+      ["With captions", `${k.with_captions}/${k.sample_size}`], ["Last 7 days", `${k.uploaded_last_7_days}/${k.sample_size}`], ["Results", num(k.estimated_results)]];
     box.innerHTML = `<h2>Search term: “${esc(k.keyword)}”</h2><div class="tiles">${tiles.map(([label, value]) => `<div class="tile"><span>${label}</span><b>${value}</b></div>`).join("")}</div>
-      <h2>Top channels for this search</h2><div class="chips">${k.top_channels.map(c => `<a class="chip" target="_blank" href="https://www.youtube.com/channel/${c.id}">${esc(c.name)}<small>${num(c.subscribers)} subs · best ${num(c.best_views)} views</small></a>`).join("")}</div>`;
+      <h2>Top channels for this search</h2><div class="chips">${k.top_channels.map(c => `<a class="chip" target="_blank" href="https://www.youtube.com/channel/${c.id}">${esc(c.name)}<small>${num(c.subscribers)} subs · best ${num(c.best_views)} views</small></a>`).join("")}</div>
+      <h2>Related keywords</h2><div class="chips">${k.related.map(r => `<span class="chip" data-keyword="${esc(r.keyword)}">${esc(r.keyword)}<small class="${tone(r.overall)}">${r.overall}</small></span>`).join("") || '<span class="sub">None found</span>'}</div>`;
   } catch (error) {
     box.innerHTML = `<div class="error">${esc(error.message)}</div>`;
   }
@@ -299,7 +305,7 @@ async function keywordDetail(keyword) {
 
 function seoBlock(seo) {
   return `<h2>SEO score</h2><div class="row"><div class="ring ${tone(seo.score)}" style="--v:${seo.score}"><b>${seo.score}</b></div>
-    <div class="checks grow">${seo.checks.map(c => `<div><span class="pill ${c.passed ? "good" : c.points ? "mid" : "bad"}">${c.points}/${c.max}</span><span>${esc(c.label)}${c.passed ? "" : `<small>${esc(c.tip)}</small>`}</span></div>`).join("")}</div></div>`;
+    <div class="checks grow">${seo.controversial.length ? `<div><span class="pill bad">!</span><span>Controversial keywords: <b>${seo.controversial.map(esc).join(", ")}</b><small>Advertisers avoid these words; reword them to protect ads and reach.</small></span></div>` : ""}${seo.checks.map(c => `<div><span class="pill ${c.passed ? "good" : c.points ? "mid" : "bad"}">${c.points}/${c.max}</span><span>${esc(c.label)}${c.passed ? "" : `<small>${esc(c.tip)}</small>`}</span></div>`).join("")}</div></div>`;
 }
 
 function show(name) {

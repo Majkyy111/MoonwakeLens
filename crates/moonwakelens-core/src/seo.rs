@@ -24,6 +24,18 @@ pub struct SeoCheck {
 pub struct SeoReport {
     pub score: u8,
     pub checks: Vec<SeoCheck>,
+    pub controversial: Vec<String>,
+}
+
+const CONTROVERSIAL: &[&str] = &[
+    "abuse", "alcohol", "blood", "bomb", "casino", "cocaine", "dead body", "death", "drugs", "drunk", "free robux", "gambling", "gore", "gun", "guns", "hack",
+    "hacks", "hitler", "kill", "killed", "killing", "meth", "murder", "naked", "nazi", "nsfw", "nude", "porn", "racist", "rape", "scam", "self harm", "sex",
+    "sexy", "shooter", "shooting", "suicide", "terrorist", "vape", "violence", "weed",
+];
+
+pub fn controversial_words(text: &str) -> Vec<String> {
+    let words = format!(" {} ", normalize(&text.replace(|c: char| !c.is_alphanumeric(), " ")));
+    CONTROVERSIAL.iter().filter(|w| words.contains(&format!(" {w} "))).map(|w| w.to_string()).collect()
 }
 
 pub fn score(input: &SeoInput, suggested_tags: &[String]) -> SeoReport {
@@ -41,6 +53,7 @@ pub fn score(input: &SeoInput, suggested_tags: &[String]) -> SeoReport {
         suggested_tags.iter().filter(|s| tags.contains(&normalize(s))).count() as f64 / suggested_tags.len().min(5) as f64
     };
     let flag = |ok: bool| if ok { 1.0 } else { 0.0 };
+    let controversial = controversial_words(&format!("{} {} {}", input.title, input.description, input.tags.join(" ")));
 
     let mut checks = Vec::new();
     let mut add = |label: &str, max: u8, ratio: f64, tip: &str| {
@@ -60,10 +73,11 @@ pub fn score(input: &SeoInput, suggested_tags: &[String]) -> SeoReport {
     add("Tags fit in 500 characters", 5, flag(!tags.is_empty() && tags_length <= 500), "Keep all tags together under 500 characters.");
     add("1 to 15 hashtags", 5, flag((1..=15).contains(&hashtag_count)), "Add 1-3 relevant hashtags (never more than 15).");
     add("Chapters in the description", 5, flag(has_timestamps(&input.description)), "Add timestamps (0:00 Intro ...) to get chapters.");
+    add("No controversial keywords", 5, flag(controversial.is_empty()), "Advertisers avoid some words; reword them to protect ads and reach.");
 
     let max: u32 = checks.iter().map(|c| c.max as u32).sum();
     let got: u32 = checks.iter().map(|c| c.points as u32).sum();
-    SeoReport { score: (got as f64 * 100.0 / max as f64).round() as u8, checks }
+    SeoReport { score: (got as f64 * 100.0 / max as f64).round() as u8, checks, controversial }
 }
 
 #[cfg(test)]
@@ -82,5 +96,11 @@ mod tests {
         assert!(report.score >= 70, "score {}", report.score);
         let empty = score(&SeoInput { title: "x".into(), description: String::new(), tags: vec![], keyword: Some("roblox".into()) }, &[]);
         assert!(empty.score < 10);
+    }
+
+    #[test]
+    fn flags_controversial_words() {
+        assert_eq!(controversial_words("I KILLED the boss, free robux!"), vec!["free robux", "killed"]);
+        assert!(controversial_words("skilled builder").is_empty());
     }
 }

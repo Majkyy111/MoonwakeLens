@@ -1,4 +1,4 @@
-use crate::model::{ChannelInfo, SearchPage, VideoDetails, VideoSummary};
+use crate::model::{ChannelAbout, ChannelInfo, SearchPage, VideoDetails, VideoSummary};
 use crate::parse::*;
 use anyhow::{anyhow, Result};
 use base64::Engine as _;
@@ -246,6 +246,18 @@ impl YouTube {
         })
     }
 
+    pub async fn channel_about(&self, id: &str) -> Result<ChannelAbout> {
+        let home = self.innertube("browse", json!({"browseId": id})).await?;
+        let Some(token) = home.get("header").and_then(|h| first_str(h, "token")) else { return Ok(ChannelAbout::default()) };
+        let about = self.innertube("browse", json!({"continuation": token})).await?;
+        let Some(view) = first(&about, "aboutChannelViewModel") else { return Ok(ChannelAbout::default()) };
+        Ok(ChannelAbout {
+            total_views: view.get("viewCountText").and_then(Value::as_str).and_then(parse_count),
+            country: view.get("country").and_then(Value::as_str).map(String::from),
+            joined: view.get("joinedDateText").and_then(text).map(|t| t.trim_start_matches("Joined ").to_string()),
+        })
+    }
+
     async fn paged(&self, first_page: Arc<Value>, max: usize, parse: impl Fn(&Value) -> Vec<VideoSummary>) -> Result<Vec<VideoSummary>> {
         let mut items = parse(&first_page);
         let mut page = first_page;
@@ -290,9 +302,10 @@ fn from_video_renderer(r: &Value) -> Option<VideoSummary> {
             views: label("viewCountText").and_then(|t| parse_count(&t)),
             age_hours: label("publishedTimeText").and_then(|t| parse_age_hours(&t)),
             duration_seconds: label("lengthText").and_then(|t| parse_duration(&t)),
-            is_short: false,
             verified_channel: r.get("ownerBadges").is_some_and(|b| b.to_string().contains("VERIFIED")),
-            views_per_hour: None,
+            has_captions: r.get("badges").is_some_and(|b| b.to_string().contains("\"CC\"")),
+            description_snippet: r.get("detailedMetadataSnippets").and_then(|s| first(s, "snippetText")).and_then(text),
+            ..Default::default()
         }
         .with_vph(),
     )
@@ -302,18 +315,7 @@ fn from_short_lockup(s: &Value) -> Option<VideoSummary> {
     let id = first(s, "reelWatchEndpoint")?.get("videoId")?.as_str()?.to_string();
     let label = s.get("accessibilityText")?.as_str()?;
     let (title, views) = label.rsplit_once(", ")?;
-    Some(VideoSummary {
-        id,
-        title: title.to_string(),
-        channel_id: None,
-        channel_name: None,
-        views: parse_count(views),
-        age_hours: None,
-        duration_seconds: None,
-        is_short: true,
-        verified_channel: false,
-        views_per_hour: None,
-    })
+    Some(VideoSummary { id, title: title.to_string(), views: parse_count(views), is_short: true, ..Default::default() })
 }
 
 fn channel_videos(page: &Value, channel_id: &str, channel_name: &str) -> Vec<VideoSummary> {
@@ -337,9 +339,7 @@ fn channel_videos(page: &Value, channel_id: &str, channel_name: &str) -> Vec<Vid
                     views: parts.iter().find(|p| p.contains("view")).and_then(|p| parse_count(p)),
                     age_hours: parts.iter().find(|p| p.contains("ago")).and_then(|p| parse_age_hours(p)),
                     duration_seconds: all(l, "thumbnailBadgeViewModel").into_iter().filter_map(|b| b.get("text")?.as_str()).find_map(parse_duration),
-                    is_short: false,
-                    verified_channel: false,
-                    views_per_hour: None,
+                    ..Default::default()
                 }
                 .with_vph(),
             )

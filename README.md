@@ -8,11 +8,11 @@ YouTube research for our own videos: what is trending in a niche right now, whic
 |---|---|
 | Trending | Fresh videos or Shorts for your topics (today / week / month / year), ranked by views per hour, with outlier scores and the hottest words in their titles |
 | Discover | Presets for any search: Outliers, Hidden gems (small channels), Underdogs (views per subscriber), Blowing up, Trending Shorts, Today's top, Evergreens, Recent uploads |
-| Keyword research | Autocomplete keywords scored 0-100 for volume, competition and overall opportunity, plus search-term stats (highest/average views, average subscribers, keyword in title, uploads in the last 7 days, top channels) |
-| Video scorecard | Views per hour, likes, comments, engagement, outlier score, tag rankings, SEO score |
-| Channel audit | Subscribers, median views for videos and Shorts, upload rate, best recent uploads, most used tags |
+| Keyword research | Autocomplete keywords scored 0-100 for volume, competition and overall opportunity, plus search-term stats (highest/average views, average subscribers, average age, keyword in title and description, captions, uploads in the last 7 days, top channels, scored related keywords) |
+| Video scorecard | Views per hour, likes, comments, engagement, outlier score, tag rankings, channel tags, SEO score, controversial keywords |
+| Channel audit | Subscribers, total views, views per video, country, join date, median views for videos and Shorts, upload rate, best recent uploads, most used tags |
 | Tag suggestions | Tags the top-ranking videos for a keyword use, weighted by rank |
-| SEO check | Score and checklist for a title, description and tags before upload |
+| SEO check | Score and checklist for a title, description and tags before upload, including words advertisers avoid |
 
 Every result list can be downloaded as CSV.
 

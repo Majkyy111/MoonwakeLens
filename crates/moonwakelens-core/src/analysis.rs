@@ -1,7 +1,7 @@
 use crate::client::{Kind, Window, YouTube};
 use crate::metrics::*;
-use crate::model::{ChannelInfo, VideoDetails, VideoSummary};
-use crate::parse::{normalize, video_id};
+use crate::model::{ChannelAbout, ChannelInfo, VideoDetails, VideoSummary};
+use crate::parse::{is_noise_keyword, normalize, video_id};
 use crate::seo::{self, SeoInput, SeoReport};
 use anyhow::{anyhow, Result};
 use futures::{stream, StreamExt};
@@ -41,9 +41,20 @@ pub struct KeywordScore {
     pub average_views: u64,
     pub average_age_hours: Option<f64>,
     pub in_title: usize,
+    pub in_description: usize,
+    pub with_captions: usize,
     pub uploaded_last_7_days: usize,
     pub average_subscribers: Option<u64>,
     pub top_channels: Vec<ChannelStat>,
+    pub related: Vec<RelatedKeyword>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RelatedKeyword {
+    pub keyword: String,
+    pub overall: u8,
+    pub volume: u8,
+    pub competition: u8,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,6 +130,7 @@ pub struct VideoReport {
     pub channel_median_views: Option<u64>,
     pub outlier_score: Option<f64>,
     pub views_per_subscriber: Option<f64>,
+    pub channel_tags: Vec<String>,
     pub tag_ranks: Vec<TagRank>,
     pub seo: SeoReport,
 }
@@ -132,6 +144,8 @@ pub struct TagCount {
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelAudit {
     pub channel: ChannelInfo,
+    pub about: ChannelAbout,
+    pub views_per_video: Option<u64>,
     pub median_views: Option<u64>,
     pub median_short_views: Option<u64>,
     pub average_views: Option<u64>,
@@ -321,7 +335,24 @@ impl Engine {
         (average, channels)
     }
 
-    pub async fn keyword_score(&self, keyword: &str, detailed: bool) -> Result<KeywordScore> {
+    pub async fn keyword_score(&self, keyword: &str) -> Result<KeywordScore> {
+        let mut score = self.keyword_basic(keyword).await?;
+        let page = self.yt.search(keyword).await?;
+        let top: Vec<&VideoSummary> = page.results.iter().filter(|v| !v.is_short).take(20).collect();
+        let related: Vec<String> = self.yt.autocomplete(keyword).await.unwrap_or_default().iter().map(|k| normalize(k)).filter(|k| *k != score.keyword && !is_noise_keyword(k)).take(6).collect();
+        let ((average_subscribers, top_channels), related) =
+            futures::join!(self.top_channels(&top), concurrent(related, |k| async move { self.keyword_basic(&k).await.ok() }));
+        score.average_subscribers = average_subscribers;
+        score.top_channels = top_channels;
+        score.related = related
+            .into_iter()
+            .flatten()
+            .map(|k| RelatedKeyword { keyword: k.keyword, overall: k.overall, volume: k.volume, competition: k.competition })
+            .collect();
+        Ok(score)
+    }
+
+    async fn keyword_basic(&self, keyword: &str) -> Result<KeywordScore> {
         let (page, strength) = futures::join!(self.yt.search(keyword), self.autocomplete_strength(keyword));
         let page = page?;
         let top: Vec<&VideoSummary> = page.results.iter().filter(|v| !v.is_short).take(20).collect();
@@ -338,16 +369,22 @@ impl Engine {
         let competition = 0.35 * title_match_ratio + 0.35 * verified_ratio + 0.3 * demand;
         let views: Vec<u64> = top.iter().filter_map(|v| v.views).collect();
         let ages: Vec<f64> = top.iter().filter_map(|v| v.age_hours).collect();
-        let (average_subscribers, top_channels) = if detailed { self.top_channels(&top).await } else { (None, Vec::new()) };
+        let in_description = top
+            .iter()
+            .filter(|v| v.description_snippet.as_deref().map(normalize).is_some_and(|d| words.iter().all(|w| d.contains(w.as_str()))))
+            .count();
         Ok(KeywordScore {
             sample_size: top.len(),
+            in_description,
+            with_captions: top.iter().filter(|v| v.has_captions).count(),
+            average_subscribers: None,
+            top_channels: Vec::new(),
+            related: Vec::new(),
             highest_views: views.iter().copied().max().unwrap_or(0),
             average_views: if views.is_empty() { 0 } else { views.iter().sum::<u64>() / views.len() as u64 },
             average_age_hours: (!ages.is_empty()).then(|| ages.iter().sum::<f64>() / ages.len() as f64),
             in_title: (title_match_ratio * top.len() as f64).round() as usize,
             uploaded_last_7_days: top.iter().filter(|v| v.age_hours.is_some_and(|a| a <= 168.0)).count(),
-            average_subscribers,
-            top_channels,
             keyword: normalize(keyword),
             overall: percent(0.6 * volume + 0.4 * (1.0 - competition)),
             volume: percent(volume),
@@ -369,12 +406,12 @@ impl Engine {
         let lists = concurrent(queries, |q| async move { self.yt.autocomplete(&q).await.unwrap_or_default() }).await;
         let mut keywords = vec![normalize(seed)];
         for keyword in lists.into_iter().flatten().map(|k| normalize(&k)) {
-            if !keywords.contains(&keyword) {
+            if !keywords.contains(&keyword) && !is_noise_keyword(&keyword) {
                 keywords.push(keyword);
             }
         }
         keywords.truncate(limit.max(1));
-        let mut scores: Vec<KeywordScore> = concurrent(keywords, |k| async move { self.keyword_score(&k, false).await })
+        let mut scores: Vec<KeywordScore> = concurrent(keywords, |k| async move { self.keyword_basic(&k).await })
             .await
             .into_iter()
             .filter_map(Result::ok)
@@ -448,6 +485,7 @@ impl Engine {
             channel_median_views: median,
             outlier_score: multiple(Some(video.views), median),
             views_per_subscriber: subscribers.filter(|s| *s > 0).map(|s| video.views as f64 / s as f64),
+            channel_tags: channel.map(|c| c.keywords).unwrap_or_default(),
             tag_ranks,
             seo: seo?,
             video,
@@ -456,6 +494,8 @@ impl Engine {
 
     pub async fn channel_audit(&self, input: &str) -> Result<ChannelAudit> {
         let mut channel = self.yt.channel(input, 60).await?;
+        let about = self.yt.channel_about(&channel.id).await.unwrap_or_default();
+        let views_per_video = about.total_views.zip(channel.video_count.filter(|n| *n > 0)).map(|(views, videos)| views / videos);
         let (median, median_short) = (channel.baseline(false), channel.baseline(true));
         let recent = std::mem::take(&mut channel.recent_videos);
         let shorts = std::mem::take(&mut channel.recent_shorts);
@@ -474,6 +514,8 @@ impl Engine {
         top_tags.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.tag.cmp(&b.tag)));
         top_tags.truncate(25);
         Ok(ChannelAudit {
+            about,
+            views_per_video,
             median_views: median,
             median_short_views: median_short,
             average_views: (!views.is_empty()).then(|| views.iter().sum::<u64>() / views.len() as u64),
