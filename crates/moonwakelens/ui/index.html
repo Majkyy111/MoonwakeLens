@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoonwakeLens</title>
+<style>
+:root {
+  --bg: #0b0e1a; --panel: #131829; --panel-2: #1a2036; --line: #262d48; --text: #e7e9f3; --muted: #8f96b3;
+  --accent: #8b7cf6; --accent-2: #b4a9ff; --good: #2fd39b; --mid: #f5b84b; --bad: #f2667a; --hot: #ff5d7a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.app { display: grid; grid-template-columns: 220px 1fr; height: 100%; }
+nav { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; padding: 0 8px 18px; letter-spacing: .2px; }
+.brand .moon { width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff 0 18%, var(--accent-2) 19% 45%, var(--accent) 46%); box-shadow: 0 0 18px #8b7cf680; }
+nav button { all: unset; cursor: pointer; padding: 9px 12px; border-radius: 9px; color: var(--muted); font-weight: 600; }
+nav button:hover { background: var(--panel-2); color: var(--text); }
+nav button.active { background: #8b7cf622; color: var(--accent-2); }
+nav .foot { margin-top: auto; padding: 10px 8px 0; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
+nav .foot button { all: unset; cursor: pointer; color: var(--accent-2); font-weight: 600; }
+main { overflow: auto; padding: 26px 32px 60px; }
+h1 { margin: 0 0 4px; font-size: 22px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+form.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 14px; margin-bottom: 20px; }
+label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); font-weight: 600; }
+input, select, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; outline: none; min-width: 120px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+textarea { min-height: 110px; resize: vertical; width: 100%; }
+.grow { flex: 1; min-width: 260px; }
+.check { display: flex; gap: 6px; align-items: center; color: var(--text); font-weight: 500; padding-bottom: 9px; }
+.check input { min-width: 0; }
+button.go { background: var(--accent); border: 0; border-radius: 9px; padding: 10px 18px; font-weight: 700; cursor: pointer; color: #fff; }
+button.go:disabled { opacity: .55; cursor: wait; }
+button.ghost { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.status { color: var(--muted); margin: 10px 0; }
+.error { color: var(--bad); background: #f2667a14; border: 1px solid #f2667a44; padding: 10px 12px; border-radius: 10px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; transition: transform .12s, border-color .12s; }
+.card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.thumb { position: relative; aspect-ratio: 16/9; background: #000; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb.short img { object-fit: contain; }
+.thumb .dur, .thumb .mult, .thumb .kind { position: absolute; font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: #000c; }
+.thumb .dur { right: 8px; bottom: 8px; }
+.thumb .kind { left: 8px; bottom: 8px; background: #ff0033; }
+.thumb .mult { left: 8px; top: 8px; }
+.mult.warm { background: var(--mid); color: #1a1200; }
+.mult.hot { background: var(--hot); color: #fff; }
+.meta { padding: 10px 12px 12px; display: grid; gap: 4px; }
+.title { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.chan { color: var(--muted); font-size: 12px; }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.stats b { color: var(--text); }
+.stats .vph b { color: var(--good); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
+.chip small { color: var(--muted); margin-left: 6px; }
+.chip:hover { border-color: var(--accent); }
+h2 { font-size: 15px; margin: 22px 0 10px; color: var(--accent-2); }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-size: 12px; font-weight: 600; background: var(--panel-2); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; }
+.score { display: inline-flex; align-items: center; gap: 8px; min-width: 110px; }
+.score i { flex: 1; height: 6px; border-radius: 9px; background: var(--panel-2); overflow: hidden; }
+.score i::after { content: ""; display: block; height: 100%; width: var(--w); background: var(--c); }
+.pill { font-weight: 700; padding: 2px 8px; border-radius: 6px; font-size: 12px; }
+.good { --c: var(--good); color: var(--good); } .mid { --c: var(--mid); color: var(--mid); } .bad { --c: var(--bad); color: var(--bad); }
+.pill.good { background: #2fd39b1f; } .pill.mid { background: #f5b84b1f; } .pill.bad { background: #f2667a1f; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.tile span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.tile b { display: block; font-size: 22px; margin-top: 2px; }
+.hero { display: flex; gap: 18px; align-items: center; margin-bottom: 18px; }
+.hero img { width: 240px; border-radius: 12px; }
+.hero h3 { margin: 0 0 6px; font-size: 18px; }
+.checks { display: grid; gap: 8px; }
+.checks div { display: flex; gap: 10px; align-items: baseline; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+.checks small { color: var(--muted); display: block; }
+.ring { width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; font-weight: 800; background: conic-gradient(var(--c) calc(var(--v) * 1%), var(--panel-2) 0); position: relative; }
+.ring::before { content: ""; position: absolute; inset: 9px; border-radius: 50%; background: var(--bg); }
+.ring b { position: relative; }
+.row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="brand"><div class="moon"></div>MoonwakeLens</div>
+    <button data-view="trending" class="active">Trending</button>
+    <button data-view="outliers">Outliers</button>
+    <button data-view="keywords">Keywords</button>
+    <button data-view="video">Video</button>
+    <button data-view="channel">Channel</button>
+    <button data-view="tags">Tags</button>
+    <button data-view="seo">SEO check</button>
+    <div class="foot"><span id="version">MoonwakeLens</span><button id="update" class="hidden"></button></div>
+  </nav>
+  <main>
+    <section id="trending">
+      <h1>Trending</h1>
+      <p class="sub">Fresh videos and Shorts blowing up in your niches, ranked by views per hour. The badge shows how many times the channel's normal views it got.</p>
+      <form class="bar">
+        <label class="grow">Topics (comma separated)<input name="queries" placeholder="roblox game dev, roblox update" required></label>
+        <label>Uploaded<select name="window"><option value="today">Today</option><option value="week" selected>This week</option><option value="month">This month</option><option value="year">This year</option></select></label>
+        <label>Type<select name="kind"><option value="short">Shorts</option><option value="video">Long videos</option><option value="any">Both</option></select></label>
+        <button class="go">Find trends</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="outliers" class="hidden">
+      <h1>Outliers</h1>
+      <p class="sub">Videos that beat their own channel's median views the most. These are the formats and ideas worth remaking.</p>
+      <form class="bar">
+        <label class="grow">Search<input name="query" placeholder="roblox horror game" required></label>
+        <label>Uploaded<select name="window"><option value="any">Any time</option><option value="week">This week</option><option value="month" selected>This month</option><option value="year">This year</option></select></label>
+        <label>Type<select name="kind"><option value="any">Both</option><option value="video">Long videos</option><option value="short">Shorts</option></select></label>
+        <button class="go">Find outliers</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="keywords" class="hidden">
+      <h1>Keyword research</h1>
+      <p class="sub">What people type into YouTube search, scored for volume, competition and overall opportunity.</p>
+      <form class="bar">
+        <label class="grow">Seed keyword<input name="seed" placeholder="roblox game" required></label>
+        <label>How many<select name="limit"><option>15</option><option selected>25</option><option>40</option></select></label>
+        <label class="check"><input type="checkbox" name="deep"> Deep (a-z)</label>
+        <button class="go">Research</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="video" class="hidden">
+      <h1>Video scorecard</h1>
+      <p class="sub">Paste any video link: views per hour, engagement, outlier score, tag rankings and SEO.</p>
+      <form class="bar">
+        <label class="grow">Video link or id<input name="video" placeholder="https://www.youtube.com/watch?v=..." required></label>
+        <button class="go">Analyze</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="channel" class="hidden">
+      <h1>Channel audit</h1>
+      <p class="sub">Any channel's numbers, upload rhythm, tags and its best-performing recent videos.</p>
+      <form class="bar">
+        <label class="grow">Channel<input name="channel" placeholder="@handle or channel link" required></label>
+        <button class="go">Audit</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="tags" class="hidden">
+      <h1>Tag suggestions</h1>
+      <p class="sub">Tags the top-ranking videos for a keyword use, weighted by how high they rank.</p>
+      <form class="bar">
+        <label class="grow">Keyword<input name="keyword" placeholder="roblox game ideas" required></label>
+        <button class="go">Get tags</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="seo" class="hidden">
+      <h1>SEO check</h1>
+      <p class="sub">Score a title, description and tags before you upload.</p>
+      <form class="bar">
+        <label class="grow">Target keyword<input name="keyword" placeholder="roblox game ideas"></label>
+        <label class="grow">Title<input name="title" required></label>
+        <label style="width:100%">Description<textarea name="description"></textarea></label>
+        <label class="grow">Tags (comma separated)<input name="tags"></label>
+        <button class="go">Score it</button>
+      </form>
+      <div class="out"></div>
+    </section>
+  </main>
+</div>
+<script>
+const $ = (selector, root = document) => root.querySelector(selector);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const num = n => n == null ? "–" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(Math.round(n));
+const pct = n => n == null ? "–" : n.toFixed(n < 1 ? 2 : 1) + "%";
+const ago = h => h == null ? "–" : h < 1 ? Math.round(h * 60) + "m" : h < 48 ? Math.round(h) + "h" : h < 24 * 60 ? Math.round(h / 24) + "d" : h < 8760 * 2 ? Math.round(h / 730) + "mo" : Math.round(h / 8760) + "y";
+const clock = s => s == null ? "" : (s >= 3600 ? Math.floor(s / 3600) + ":" + String(Math.floor(s % 3600 / 60)).padStart(2, "0") : Math.floor(s / 60)) + ":" + String(s % 60).padStart(2, "0");
+const tone = v => v >= 70 ? "good" : v >= 40 ? "mid" : "bad";
+const scoreBar = v => `<span class="score ${tone(v)}"><b>${v}</b><i style="--w:${v}%"></i></span>`;
+const watchUrl = v => `https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.id}`;
+
+async function api(tool, args) {
+  const response = await fetch(`/api/${tool}`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(args)});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  return data;
+}
+
+function card(v) {
+  const multiple = v.outlier_score == null ? "" : `<span class="mult ${v.outlier_score >= 3 ? "hot" : v.outlier_score >= 1.5 ? "warm" : ""}">${v.outlier_score.toFixed(1)}×</span>`;
+  return `<a class="card" href="${watchUrl(v)}" target="_blank">
+    <div class="thumb${v.is_short ? " short" : ""}"><img loading="lazy" src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="">${multiple}
+      ${v.is_short ? '<span class="kind">Short</span>' : ""}${v.duration_seconds && !v.is_short ? `<span class="dur">${clock(v.duration_seconds)}</span>` : ""}</div>
+    <div class="meta"><div class="title">${esc(v.title)}</div><div class="chan">${esc(v.channel_name || "")}</div>
+      <div class="stats"><span><b>${num(v.views)}</b> views</span><span class="vph"><b>${num(v.views_per_hour)}</b>/hour</span><span>${ago(v.age_hours)} ago</span></div></div></a>`;
+}
+
+const views = {
+  async trending(form) {
+    const queries = form.queries.value.split(",").map(q => q.trim()).filter(Boolean);
+    const data = await api("trending", {queries, window: form.window.value, kind: form.kind.value, limit: 48});
+    const topics = data.topics.map(t => `<span class="chip" data-term="${esc(t.term)}">${esc(t.term)}<small>${t.videos} videos · ${num(t.views_per_hour)}/h</small></span>`).join("");
+    return (topics ? `<h2>Hot topics in these titles</h2><div class="chips">${topics}</div>` : "") +
+      `<h2>${data.videos.length} videos by views per hour</h2><div class="grid">${data.videos.map(card).join("")}</div>`;
+  },
+  async outliers(form) {
+    const data = await api("outliers", {query: form.query.value, window: form.window.value, kind: form.kind.value});
+    return `<div class="grid">${data.map(card).join("")}</div>`;
+  },
+  async keywords(form) {
+    const data = await api("keyword_research", {seed: form.seed.value, limit: +form.limit.value, deep: form.deep.checked});
+    return `<table><tr><th>Keyword</th><th>Overall</th><th>Volume</th><th>Competition</th><th>Top videos' median views</th><th>Results</th><th></th></tr>${data.map(k => `
+      <tr><td><b>${esc(k.keyword)}</b></td><td>${scoreBar(k.overall)}</td><td>${scoreBar(k.volume)}</td><td>${scoreBar(100 - k.competition).replace(`<b>${100 - k.competition}</b>`, `<b>${k.competition}</b>`)}</td>
+      <td class="num">${num(k.median_top_views)}</td><td class="num">${num(k.estimated_results)}</td>
+      <td><button class="ghost" data-goto="tags" data-value="${esc(k.keyword)}">Tags</button> <button class="ghost" data-goto="outliers" data-value="${esc(k.keyword)}">Outliers</button></td></tr>`).join("")}</table>`;
+  },
+  async video(form) {
+    const r = await api("video_report", {video: form.video.value});
+    const v = r.video;
+    const tiles = [["Views", num(v.views)], ["Views / hour", num(r.views_per_hour)], ["Likes", num(v.likes)], ["Comments", num(v.comments)], ["Engagement", pct(r.engagement_rate)],
+      ["Outlier", r.outlier_score == null ? "–" : r.outlier_score.toFixed(1) + "×"], ["Channel median", num(r.channel_median_views)], ["Subscribers", num(r.channel_subscribers)], ["Views / subscriber", r.views_per_subscriber?.toFixed(2) ?? "–"], ["Age", ago(v.age_hours)]];
+    return `<div class="hero"><img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt=""><div><h3><a href="https://www.youtube.com/watch?v=${v.id}" target="_blank">${esc(v.title)}</a></h3><div class="chan">${esc(v.channel_name)} · ${esc(v.category || "")} · ${clock(v.duration_seconds)}</div></div></div>
+      <div class="tiles">${tiles.map(([k, val]) => `<div class="tile"><span>${k}</span><b>${val}</b></div>`).join("")}</div>
+      <h2>Tags and where this video ranks for them</h2>
+      <div class="chips">${r.tag_ranks.map(t => `<span class="chip">${esc(t.tag)}<small>${t.rank ? "#" + t.rank : "not in top 20"}</small></span>`).join("") || '<span class="sub">No tags</span>'}${v.tags.slice(8).map(t => `<span class="chip">${esc(t)}</span>`).join("")}</div>
+      ${seoBlock(r.seo)}`;
+  },
+  async channel(form) {
+    const a = await api("channel_audit", {channel: form.channel.value});
+    const c = a.channel;
+    const tiles = [["Subscribers", num(c.subscribers)], ["Videos", num(c.video_count)], ["Median video views", num(a.median_views)], ["Median Short views", num(a.median_short_views)], ["Average video views", num(a.average_views)], ["Videos / week", a.uploads_per_week?.toFixed(1) ?? "–"], ["Last video", ago(a.last_upload_hours) + " ago"]];
+    const bestFirst = list => [...list].sort((x, y) => (y.outlier_score ?? 0) - (x.outlier_score ?? 0));
+    return `<div class="hero"><div><h3><a href="https://www.youtube.com/channel/${c.id}" target="_blank">${esc(c.name)}</a></h3><div class="chan">${esc(c.handle || "")}</div></div></div>
+      <div class="tiles">${tiles.map(([k, val]) => `<div class="tile"><span>${k}</span><b>${val}</b></div>`).join("")}</div>
+      <h2>Most used tags</h2><div class="chips">${a.top_tags.map(t => `<span class="chip">${esc(t.tag)}<small>${t.count}×</small></span>`).join("") || '<span class="sub">No tags</span>'}</div>
+      ${a.shorts.length ? `<h2>Recent Shorts, best performers first</h2><div class="grid">${bestFirst(a.shorts).map(card).join("")}</div>` : ""}
+      ${a.videos.length ? `<h2>Recent videos, best performers first</h2><div class="grid">${bestFirst(a.videos).map(card).join("")}</div>` : ""}`;
+  },
+  async tags(form) {
+    const data = await api("tag_suggestions", {keyword: form.keyword.value, limit: 30});
+    return `<p><button class="ghost" id="copy-tags">Copy all tags</button></p>
+      <table><tr><th>Tag</th><th>Score</th><th>Used by top videos</th></tr>${data.map(t => `<tr><td>${esc(t.tag)}</td><td>${scoreBar(t.score)}</td><td class="num">${t.used_by} of 10</td></tr>`).join("")}</table>
+      <textarea id="tag-list" class="hidden">${esc(data.map(t => t.tag).join(", "))}</textarea>`;
+  },
+  async seo(form) {
+    const tags = form.tags.value.split(",").map(t => t.trim()).filter(Boolean);
+    return seoBlock(await api("seo_check", {title: form.title.value, description: form.description.value, tags, keyword: form.keyword.value || null}));
+  },
+};
+
+function seoBlock(seo) {
+  return `<h2>SEO score</h2><div class="row"><div class="ring ${tone(seo.score)}" style="--v:${seo.score}"><b>${seo.score}</b></div>
+    <div class="checks grow">${seo.checks.map(c => `<div><span class="pill ${c.passed ? "good" : c.points ? "mid" : "bad"}">${c.points}/${c.max}</span><span>${esc(c.label)}${c.passed ? "" : `<small>${esc(c.tip)}</small>`}</span></div>`).join("")}</div></div>`;
+}
+
+function show(name) {
+  document.querySelectorAll("nav button[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+  document.querySelectorAll("main section").forEach(s => s.classList.toggle("hidden", s.id !== name));
+}
+
+document.querySelectorAll("nav button[data-view]").forEach(b => b.onclick = () => show(b.dataset.view));
+
+document.querySelectorAll("main section").forEach(section => {
+  const form = $("form", section), out = $(".out", section), button = $("button.go", section);
+  const saved = JSON.parse(localStorage.getItem("form:" + section.id) || "{}");
+  for (const [name, value] of Object.entries(saved)) if (form[name]) form[name].type === "checkbox" ? form[name].checked = value : form[name].value = value;
+  form.onsubmit = async event => {
+    event.preventDefault();
+    localStorage.setItem("form:" + section.id, JSON.stringify(Object.fromEntries([...form.elements].filter(e => e.name).map(e => [e.name, e.type === "checkbox" ? e.checked : e.value]))));
+    button.disabled = true;
+    const started = Date.now();
+    out.innerHTML = `<div class="status">Working… reading YouTube</div>`;
+    try {
+      out.innerHTML = await views[section.id](form) + `<div class="status">Done in ${((Date.now() - started) / 1000).toFixed(1)} s</div>`;
+    } catch (error) {
+      out.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+    } finally {
+      button.disabled = false;
+    }
+  };
+});
+
+document.addEventListener("click", event => {
+  const goto = event.target.closest("[data-goto]");
+  if (goto) {
+    const section = $("#" + goto.dataset.goto), form = $("form", section);
+    (form.query || form.keyword).value = goto.dataset.value;
+    show(goto.dataset.goto);
+    form.requestSubmit();
+  }
+  const term = event.target.closest("[data-term]");
+  if (term) {
+    $("#outliers form").query.value = term.dataset.term;
+    show("outliers");
+    $("#outliers form").requestSubmit();
+  }
+  if (event.target.id === "copy-tags") {
+    navigator.clipboard.writeText($("#tag-list").value);
+    event.target.textContent = "Copied";
+  }
+});
+
+const ping = () => fetch("/api/ping", {method: "POST"}).catch(() => {});
+ping();
+setInterval(ping, 15000);
+
+fetch("/api/version").then(r => r.json()).then(info => {
+  $("#version").textContent = "MoonwakeLens v" + info.version;
+  if (info.update) {
+    const button = $("#update");
+    button.textContent = `Update to v${info.update.version}`;
+    button.classList.remove("hidden");
+    button.onclick = async () => {
+      button.textContent = "Updating…";
+      const result = await fetch("/api/update", {method: "POST"}).then(r => r.json());
+      button.textContent = result.error ? "Update failed" : "Restarting…";
+      if (!result.error) setTimeout(() => location.reload(), 4000);
+    };
+  }
+}).catch(() => {});
+</script>
+</body>
+</html>
