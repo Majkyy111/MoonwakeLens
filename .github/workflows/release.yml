@@ -1,0 +1,30 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: cargo build --release
+      - name: Publish a release when the version is new
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "v$version is already released"
+          else
+            gh release create "v$version" target/release/MoonwakeLens.exe --title "MoonwakeLens v$version" --generate-notes
+          fi
