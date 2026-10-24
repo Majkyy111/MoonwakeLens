@@ -33,7 +33,7 @@ async fn respond(engine: &Engine, id: Value, request: &Value) -> Value {
             "protocolVersion": params.get("protocolVersion").cloned().unwrap_or(json!("2025-06-18")),
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "moonwakelens", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "YouTube research from public YouTube data. Start with `trending` for what is blowing up in a niche, `outliers` for formats that beat their channel's normal views, and `keyword_research` for video topics people search."
+            "instructions": "YouTube research from public YouTube data. Start with `trending` for what is blowing up in a niche, `discover` for formats that beat their channel's normal views (presets: outliers, hidden_gems, underdogs, blowing_up, trending_shorts, todays_top, evergreens, recent_uploads), and `keyword_research` for video topics people search."
         }),
         "ping" => json!({}),
         "tools/list" => json!({"tools": tools::definitions()}),

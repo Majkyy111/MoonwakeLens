@@ -94,7 +94,7 @@ td.num { font-variant-numeric: tabular-nums; }
   <nav>
     <div class="brand"><div class="moon"></div>MoonwakeLens</div>
     <button data-view="trending" class="active">Trending</button>
-    <button data-view="outliers">Outliers</button>
+    <button data-view="discover">Discover</button>
     <button data-view="keywords">Keywords</button>
     <button data-view="video">Video</button>
     <button data-view="channel">Channel</button>
@@ -114,14 +114,22 @@ td.num { font-variant-numeric: tabular-nums; }
       </form>
       <div class="out"></div>
     </section>
-    <section id="outliers" class="hidden">
-      <h1>Outliers</h1>
-      <p class="sub">Videos that beat their own channel's median views the most. These are the formats and ideas worth remaking.</p>
+    <section id="discover" class="hidden">
+      <h1>Discover</h1>
+      <p class="sub">Find the videos worth learning from for any search. Outlier = views ÷ the channel's normal views (Shorts compared with Shorts).</p>
       <form class="bar">
         <label class="grow">Search<input name="query" placeholder="roblox horror game" required></label>
-        <label>Uploaded<select name="window"><option value="any">Any time</option><option value="week">This week</option><option value="month" selected>This month</option><option value="year">This year</option></select></label>
-        <label>Type<select name="kind"><option value="any">Both</option><option value="video">Long videos</option><option value="short">Shorts</option></select></label>
-        <button class="go">Find outliers</button>
+        <label>Show<select name="preset">
+          <option value="outliers">Outliers: beat their channel most</option>
+          <option value="hidden_gems">Hidden gems: outliers from small channels</option>
+          <option value="underdogs">Underdogs: most views per subscriber</option>
+          <option value="blowing_up">Blowing up: fastest views per hour</option>
+          <option value="trending_shorts">Trending Shorts</option>
+          <option value="todays_top">Today's top</option>
+          <option value="evergreens">Evergreens: old videos still pulling views</option>
+          <option value="recent_uploads">Recent uploads</option>
+        </select></label>
+        <button class="go">Discover</button>
       </form>
       <div class="out"></div>
     </section>
@@ -209,19 +217,22 @@ const views = {
     const queries = form.queries.value.split(",").map(q => q.trim()).filter(Boolean);
     const data = await api("trending", {queries, window: form.window.value, kind: form.kind.value, limit: 48});
     const topics = data.topics.map(t => `<span class="chip" data-term="${esc(t.term)}">${esc(t.term)}<small>${t.videos} videos · ${num(t.views_per_hour)}/h</small></span>`).join("");
+    exportRows = data.videos.map(videoRow);
     return (topics ? `<h2>Hot topics in these titles</h2><div class="chips">${topics}</div>` : "") +
-      `<h2>${data.videos.length} videos by views per hour</h2><div class="grid">${data.videos.map(card).join("")}</div>`;
+      `<h2>${data.videos.length} videos by views per hour ${csvButton}</h2><div class="grid">${data.videos.map(card).join("")}</div>`;
   },
-  async outliers(form) {
-    const data = await api("outliers", {query: form.query.value, window: form.window.value, kind: form.kind.value});
-    return `<div class="grid">${data.map(card).join("")}</div>`;
+  async discover(form) {
+    const data = await api("discover", {query: form.query.value, preset: form.preset.value});
+    exportRows = data.map(videoRow);
+    return data.length ? `<h2>${data.length} videos ${csvButton}</h2><div class="grid">${data.map(card).join("")}</div>` : `<p class="sub">Nothing matched this preset for that search.</p>`;
   },
   async keywords(form) {
     const data = await api("keyword_research", {seed: form.seed.value, limit: +form.limit.value, deep: form.deep.checked});
-    return `<table><tr><th>Keyword</th><th>Overall</th><th>Volume</th><th>Competition</th><th>Top videos' median views</th><th>Results</th><th></th></tr>${data.map(k => `
+    exportRows = data.map(k => ({keyword: k.keyword, overall: k.overall, volume: k.volume, competition: k.competition, median_top_views: k.median_top_views, average_views: k.average_views, uploaded_last_7_days: k.uploaded_last_7_days, results: k.estimated_results}));
+    return `<div id="keyword-detail"></div><h2>${data.length} keywords ${csvButton}</h2><table><tr><th>Keyword</th><th>Overall</th><th>Volume</th><th>Competition</th><th>Top videos' median views</th><th>New this week</th><th></th></tr>${data.map(k => `
       <tr><td><b>${esc(k.keyword)}</b></td><td>${scoreBar(k.overall)}</td><td>${scoreBar(k.volume)}</td><td>${scoreBar(100 - k.competition).replace(`<b>${100 - k.competition}</b>`, `<b>${k.competition}</b>`)}</td>
-      <td class="num">${num(k.median_top_views)}</td><td class="num">${num(k.estimated_results)}</td>
-      <td><button class="ghost" data-goto="tags" data-value="${esc(k.keyword)}">Tags</button> <button class="ghost" data-goto="outliers" data-value="${esc(k.keyword)}">Outliers</button></td></tr>`).join("")}</table>`;
+      <td class="num">${num(k.median_top_views)}</td><td class="num">${k.uploaded_last_7_days}/${k.sample_size}</td>
+      <td><button class="ghost" data-keyword="${esc(k.keyword)}">Stats</button> <button class="ghost" data-goto="tags" data-value="${esc(k.keyword)}">Tags</button> <button class="ghost" data-goto="discover" data-value="${esc(k.keyword)}">Outliers</button></td></tr>`).join("")}</table>`;
   },
   async video(form) {
     const r = await api("video_report", {video: form.video.value});
@@ -239,9 +250,10 @@ const views = {
     const c = a.channel;
     const tiles = [["Subscribers", num(c.subscribers)], ["Videos", num(c.video_count)], ["Median video views", num(a.median_views)], ["Median Short views", num(a.median_short_views)], ["Average video views", num(a.average_views)], ["Videos / week", a.uploads_per_week?.toFixed(1) ?? "–"], ["Last video", ago(a.last_upload_hours) + " ago"]];
     const bestFirst = list => [...list].sort((x, y) => (y.outlier_score ?? 0) - (x.outlier_score ?? 0));
+    exportRows = [...a.shorts, ...a.videos].map(videoRow);
     return `<div class="hero"><div><h3><a href="https://www.youtube.com/channel/${c.id}" target="_blank">${esc(c.name)}</a></h3><div class="chan">${esc(c.handle || "")}</div></div></div>
       <div class="tiles">${tiles.map(([k, val]) => `<div class="tile"><span>${k}</span><b>${val}</b></div>`).join("")}</div>
-      <h2>Most used tags</h2><div class="chips">${a.top_tags.map(t => `<span class="chip">${esc(t.tag)}<small>${t.count}×</small></span>`).join("") || '<span class="sub">No tags</span>'}</div>
+      <p>${csvButton}</p><h2>Most used tags</h2><div class="chips">${a.top_tags.map(t => `<span class="chip">${esc(t.tag)}<small>${t.count}×</small></span>`).join("") || '<span class="sub">No tags</span>'}</div>
       ${a.shorts.length ? `<h2>Recent Shorts, best performers first</h2><div class="grid">${bestFirst(a.shorts).map(card).join("")}</div>` : ""}
       ${a.videos.length ? `<h2>Recent videos, best performers first</h2><div class="grid">${bestFirst(a.videos).map(card).join("")}</div>` : ""}`;
   },
@@ -256,6 +268,32 @@ const views = {
     return seoBlock(await api("seo_check", {title: form.title.value, description: form.description.value, tags, keyword: form.keyword.value || null}));
   },
 };
+
+let exportRows = [];
+const csvButton = `<button class="ghost" data-csv>Download CSV</button>`;
+const videoRow = v => ({title: v.title, url: watchUrl(v), channel: v.channel_name, short: v.is_short, views: v.views, views_per_hour: v.views_per_hour && Math.round(v.views_per_hour), age_hours: v.age_hours && Math.round(v.age_hours), outlier: v.outlier_score && +v.outlier_score.toFixed(2), channel_median_views: v.channel_median_views, subscribers: v.channel_subscribers});
+
+function downloadCsv() {
+  const columns = Object.keys(exportRows[0] || {});
+  const cell = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const csv = [columns.join(","), ...exportRows.map(row => columns.map(c => cell(row[c])).join(","))].join("\n");
+  const link = Object.assign(document.createElement("a"), {href: URL.createObjectURL(new Blob(["﻿" + csv], {type: "text/csv"})), download: "moonwakelens.csv"});
+  link.click();
+}
+
+async function keywordDetail(keyword) {
+  const box = $("#keyword-detail");
+  box.innerHTML = `<div class="status">Reading stats for “${esc(keyword)}”…</div>`;
+  try {
+    const k = await api("keyword_score", {keyword});
+    const tiles = [["Overall", k.overall], ["Volume", k.volume], ["Competition", k.competition], ["Highest views", num(k.highest_views)], ["Average views", num(k.average_views)],
+      ["Average subscribers", num(k.average_subscribers)], ["Average age", ago(k.average_age_hours)], ["Keyword in title", `${k.in_title}/${k.sample_size}`], ["Last 7 days", `${k.uploaded_last_7_days}/${k.sample_size}`], ["Results", num(k.estimated_results)]];
+    box.innerHTML = `<h2>Search term: “${esc(k.keyword)}”</h2><div class="tiles">${tiles.map(([label, value]) => `<div class="tile"><span>${label}</span><b>${value}</b></div>`).join("")}</div>
+      <h2>Top channels for this search</h2><div class="chips">${k.top_channels.map(c => `<a class="chip" target="_blank" href="https://www.youtube.com/channel/${c.id}">${esc(c.name)}<small>${num(c.subscribers)} subs · best ${num(c.best_views)} views</small></a>`).join("")}</div>`;
+  } catch (error) {
+    box.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+  }
+}
 
 function seoBlock(seo) {
   return `<h2>SEO score</h2><div class="row"><div class="ring ${tone(seo.score)}" style="--v:${seo.score}"><b>${seo.score}</b></div>
@@ -299,10 +337,13 @@ document.addEventListener("click", event => {
   }
   const term = event.target.closest("[data-term]");
   if (term) {
-    $("#outliers form").query.value = term.dataset.term;
-    show("outliers");
-    $("#outliers form").requestSubmit();
+    $("#discover form").query.value = term.dataset.term;
+    show("discover");
+    $("#discover form").requestSubmit();
   }
+  if (event.target.closest("[data-csv]")) downloadCsv();
+  const keyword = event.target.closest("[data-keyword]");
+  if (keyword) keywordDetail(keyword.dataset.keyword);
   if (event.target.id === "copy-tags") {
     navigator.clipboard.writeText($("#tag-list").value);
     event.target.textContent = "Copied";

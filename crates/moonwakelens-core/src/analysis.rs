@@ -5,7 +5,7 @@ use crate::parse::{normalize, video_id};
 use crate::seo::{self, SeoInput, SeoReport};
 use anyhow::{anyhow, Result};
 use futures::{stream, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 
@@ -36,6 +36,22 @@ pub struct KeywordScore {
     pub title_match_ratio: f64,
     pub verified_ratio: f64,
     pub recent_ratio: f64,
+    pub sample_size: usize,
+    pub highest_views: u64,
+    pub average_views: u64,
+    pub average_age_hours: Option<f64>,
+    pub in_title: usize,
+    pub uploaded_last_7_days: usize,
+    pub average_subscribers: Option<u64>,
+    pub top_channels: Vec<ChannelStat>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelStat {
+    pub id: String,
+    pub name: String,
+    pub subscribers: Option<u64>,
+    pub best_views: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,8 +59,32 @@ pub struct RankedVideo {
     #[serde(flatten)]
     pub video: VideoSummary,
     pub channel_median_views: Option<u64>,
+    pub channel_subscribers: Option<u64>,
     pub outlier_score: Option<f64>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Preset {
+    #[default]
+    Outliers,
+    HiddenGems,
+    Underdogs,
+    BlowingUp,
+    TodaysTop,
+    TrendingShorts,
+    Evergreens,
+    RecentUploads,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Baseline {
+    long: Option<u64>,
+    short: Option<u64>,
+    subscribers: Option<u64>,
+}
+
+const SMALL_CHANNEL_SUBSCRIBERS: u64 = 100_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TopicTerm {
@@ -102,8 +142,23 @@ pub struct ChannelAudit {
     pub top_tags: Vec<TagCount>,
 }
 
-fn ranked(video: VideoSummary, median: Option<u64>) -> RankedVideo {
-    RankedVideo { outlier_score: multiple(video.views, median), channel_median_views: median, video }
+fn ranked(video: VideoSummary, median: Option<u64>, subscribers: Option<u64>) -> RankedVideo {
+    RankedVideo { outlier_score: multiple(video.views, median), channel_median_views: median, channel_subscribers: subscribers, video }
+}
+
+fn preset_score(preset: Preset, r: &RankedVideo) -> Option<f64> {
+    let small = r.channel_subscribers.is_some_and(|s| s < SMALL_CHANNEL_SUBSCRIBERS);
+    let v = &r.video;
+    match preset {
+        Preset::Outliers => r.outlier_score,
+        Preset::HiddenGems => r.outlier_score.filter(|_| small),
+        Preset::Underdogs => v.views.zip(r.channel_subscribers).filter(|_| small).map(|(views, subs)| views as f64 / subs.max(1) as f64),
+        Preset::BlowingUp => v.views_per_hour,
+        Preset::TrendingShorts => v.views_per_hour.filter(|_| v.is_short),
+        Preset::TodaysTop => v.views.map(|views| views as f64),
+        Preset::Evergreens => v.views_per_hour.filter(|_| v.age_hours.is_some_and(|a| a > 8760.0)),
+        Preset::RecentUploads => v.age_hours.map(|a| -a),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,42 +225,56 @@ impl Engine {
         }
     }
 
-    async fn channel_baselines(&self, videos: &[VideoSummary]) -> HashMap<String, (Option<u64>, Option<u64>)> {
+    async fn channel_baselines(&self, videos: &[VideoSummary], max_channels: usize) -> HashMap<String, Baseline> {
         let mut ids: Vec<String> = Vec::new();
         for id in videos.iter().filter_map(|v| v.channel_id.clone()) {
             if !ids.contains(&id) {
                 ids.push(id);
             }
         }
-        ids.truncate(20);
+        ids.truncate(max_channels);
         let baselines = concurrent(ids.clone(), |id| async move {
-            self.yt.channel(&id, 30).await.map(|c| (c.baseline(false), c.baseline(true))).unwrap_or_default()
+            self.yt
+                .channel(&id, 30)
+                .await
+                .map(|c| Baseline { long: c.baseline(false), short: c.baseline(true), subscribers: c.subscribers })
+                .unwrap_or_default()
         })
         .await;
         ids.into_iter().zip(baselines).collect()
     }
 
     async fn rank_against_channels(&self, videos: Vec<VideoSummary>) -> Vec<RankedVideo> {
-        let baselines = self.channel_baselines(&videos).await;
+        let baselines = self.channel_baselines(&videos, 25).await;
         videos
             .into_iter()
             .map(|video| {
-                let median = video
-                    .channel_id
-                    .as_ref()
-                    .and_then(|c| baselines.get(c))
-                    .and_then(|(long, short)| if video.is_short { *short } else { *long });
-                ranked(video, median)
+                let baseline = video.channel_id.as_ref().and_then(|c| baselines.get(c)).copied().unwrap_or_default();
+                let median = if video.is_short { baseline.short } else { baseline.long };
+                ranked(video, median, baseline.subscribers)
             })
             .collect()
     }
 
-    pub async fn outliers(&self, query: &str, window: Window, kind: Kind) -> Result<Vec<RankedVideo>> {
+    pub async fn discover(&self, query: &str, preset: Preset) -> Result<Vec<RankedVideo>> {
+        let (window, kind) = match preset {
+            Preset::Outliers => (Window::Month, Kind::Any),
+            Preset::HiddenGems | Preset::Underdogs => (Window::Year, Kind::Any),
+            Preset::BlowingUp | Preset::RecentUploads => (Window::Week, Kind::Any),
+            Preset::TodaysTop => (Window::Today, Kind::Video),
+            Preset::TrendingShorts => (Window::Week, Kind::Short),
+            Preset::Evergreens => (Window::Any, Kind::Video),
+        };
         let page = self.yt.search_filtered(query, window, kind, 2).await?;
         let videos = concurrent(page.results, |v| async move { self.complete(v).await }).await;
-        let mut ranked = self.rank_against_channels(videos).await;
-        ranked.sort_by(|a, b| b.outlier_score.unwrap_or(0.0).total_cmp(&a.outlier_score.unwrap_or(0.0)));
-        Ok(ranked)
+        let mut scored: Vec<(f64, RankedVideo)> = self
+            .rank_against_channels(videos)
+            .await
+            .into_iter()
+            .filter_map(|r| preset_score(preset, &r).map(|score| (score, r)))
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        Ok(scored.into_iter().map(|(_, r)| r).collect())
     }
 
     pub async fn autocomplete_strength(&self, keyword: &str) -> f64 {
@@ -228,7 +297,31 @@ impl Engine {
             .unwrap_or(0.0)
     }
 
-    pub async fn keyword_score(&self, keyword: &str) -> Result<KeywordScore> {
+    async fn top_channels(&self, top: &[&VideoSummary]) -> (Option<u64>, Vec<ChannelStat>) {
+        let mut videos: Vec<VideoSummary> = top.iter().map(|v| (*v).clone()).collect();
+        videos.sort_by(|a, b| b.views.cmp(&a.views));
+        let baselines = self.channel_baselines(&videos, 10).await;
+        let subscribers: Vec<u64> = baselines.values().filter_map(|b| b.subscribers).collect();
+        let mut channels: Vec<ChannelStat> = Vec::new();
+        for video in &videos {
+            let (Some(id), Some(views)) = (&video.channel_id, video.views) else { continue };
+            match channels.iter_mut().find(|c| &c.id == id) {
+                Some(channel) => channel.best_views = channel.best_views.max(views),
+                None => channels.push(ChannelStat {
+                    id: id.clone(),
+                    name: video.channel_name.clone().unwrap_or_default(),
+                    subscribers: baselines.get(id).and_then(|b| b.subscribers),
+                    best_views: views,
+                }),
+            }
+        }
+        channels.sort_by(|a, b| b.best_views.cmp(&a.best_views));
+        channels.truncate(5);
+        let average = (!subscribers.is_empty()).then(|| subscribers.iter().sum::<u64>() / subscribers.len() as u64);
+        (average, channels)
+    }
+
+    pub async fn keyword_score(&self, keyword: &str, detailed: bool) -> Result<KeywordScore> {
         let (page, strength) = futures::join!(self.yt.search(keyword), self.autocomplete_strength(keyword));
         let page = page?;
         let top: Vec<&VideoSummary> = page.results.iter().filter(|v| !v.is_short).take(20).collect();
@@ -243,7 +336,18 @@ impl Engine {
         let demand = norm_log(median_top_views as f64, 3.0, 7.0);
         let volume = 0.6 * demand + 0.4 * strength;
         let competition = 0.35 * title_match_ratio + 0.35 * verified_ratio + 0.3 * demand;
+        let views: Vec<u64> = top.iter().filter_map(|v| v.views).collect();
+        let ages: Vec<f64> = top.iter().filter_map(|v| v.age_hours).collect();
+        let (average_subscribers, top_channels) = if detailed { self.top_channels(&top).await } else { (None, Vec::new()) };
         Ok(KeywordScore {
+            sample_size: top.len(),
+            highest_views: views.iter().copied().max().unwrap_or(0),
+            average_views: if views.is_empty() { 0 } else { views.iter().sum::<u64>() / views.len() as u64 },
+            average_age_hours: (!ages.is_empty()).then(|| ages.iter().sum::<f64>() / ages.len() as f64),
+            in_title: (title_match_ratio * top.len() as f64).round() as usize,
+            uploaded_last_7_days: top.iter().filter(|v| v.age_hours.is_some_and(|a| a <= 168.0)).count(),
+            average_subscribers,
+            top_channels,
             keyword: normalize(keyword),
             overall: percent(0.6 * volume + 0.4 * (1.0 - competition)),
             volume: percent(volume),
@@ -270,7 +374,7 @@ impl Engine {
             }
         }
         keywords.truncate(limit.max(1));
-        let mut scores: Vec<KeywordScore> = concurrent(keywords, |k| async move { self.keyword_score(&k).await })
+        let mut scores: Vec<KeywordScore> = concurrent(keywords, |k| async move { self.keyword_score(&k, false).await })
             .await
             .into_iter()
             .filter_map(Result::ok)
@@ -375,8 +479,8 @@ impl Engine {
             average_views: (!views.is_empty()).then(|| views.iter().sum::<u64>() / views.len() as u64),
             uploads_per_week: (oldest > 0.0).then(|| ages.len() as f64 / (oldest / 168.0)),
             last_upload_hours: ages.iter().copied().reduce(f64::min),
-            videos: recent.into_iter().map(|video| ranked(video, median)).collect(),
-            shorts: shorts.into_iter().map(|short| ranked(short, median_short)).collect(),
+            videos: recent.into_iter().map(|video| ranked(video, median, channel.subscribers)).collect(),
+            shorts: shorts.into_iter().map(|short| ranked(short, median_short, channel.subscribers)).collect(),
             top_tags,
             channel,
         })

@@ -58,7 +58,7 @@ fn search_params(window: Window, kind: Kind) -> Option<String> {
         filters.extend([0x10, k]);
     }
     let mut bytes = Vec::new();
-    if kind == Kind::Video && date.is_some() {
+    if kind == Kind::Video {
         bytes.extend([0x08, 0x03]);
     }
     if !filters.is_empty() {
@@ -409,6 +409,7 @@ mod tests {
         assert_eq!(search_params(Window::Week, Kind::Video).as_deref(), Some("CAMSBAgDEAE="));
         assert_eq!(search_params(Window::Week, Kind::Short).as_deref(), Some("EgQIAxAJ"));
         assert_eq!(search_params(Window::Any, Kind::Short).as_deref(), Some("EgIQCQ=="));
+        assert_eq!(search_params(Window::Any, Kind::Video).as_deref(), Some("CAMSAhAB"));
         assert_eq!(search_params(Window::Any, Kind::Any), None);
     }
 }

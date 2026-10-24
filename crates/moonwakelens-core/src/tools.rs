@@ -1,4 +1,4 @@
-use crate::{seo::SeoInput, Engine, Kind, Window};
+use crate::{analysis::Preset, seo::SeoInput, Engine, Kind, Window};
 use anyhow::{anyhow, Result};
 use serde_json::{json, to_value, Value};
 
@@ -8,11 +8,11 @@ pub fn definitions() -> Value {
     json!([
         {"name": "trending", "description": "What is blowing up right now in a niche: fresh videos or Shorts for one or more topics, ranked by views per hour, with outlier scores (views vs the channel's median) and the hottest title topics.",
          "inputSchema": {"type": "object", "properties": {"queries": {"type": "array", "items": {"type": "string"}, "description": "Niche topics, e.g. [\"roblox game dev\", \"roblox update\"]"}, "window": window, "kind": kind, "limit": {"type": "integer", "default": 40}}, "required": ["queries"]}},
-        {"name": "outliers", "description": "Videos for a search that beat their own channel's median views the most (viral outliers worth copying the format of).",
-         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "window": window, "kind": kind}, "required": ["query"]}},
+        {"name": "discover", "description": "Find videos for a search with a preset: outliers (beat their channel's median views most), hidden_gems (outliers from channels under 100K subscribers), underdogs (most views per subscriber on small channels), blowing_up (fastest views per hour this week), todays_top (most viewed today), trending_shorts (Shorts gaining views fastest), evergreens (videos over a year old still getting views), recent_uploads (newest this week).",
+         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "preset": {"type": "string", "enum": ["outliers", "hidden_gems", "underdogs", "blowing_up", "todays_top", "trending_shorts", "evergreens", "recent_uploads"], "default": "outliers"}}, "required": ["query"]}},
         {"name": "keyword_research", "description": "Related keywords from YouTube autocomplete, each scored for search volume, competition and overall opportunity (0-100).",
          "inputSchema": {"type": "object", "properties": {"seed": {"type": "string"}, "limit": {"type": "integer", "default": 20}, "deep": {"type": "boolean", "default": false, "description": "Also expand seed + a..z"}}, "required": ["seed"]}},
-        {"name": "keyword_score", "description": "Volume, competition and overall score (0-100) for one keyword, with the evidence behind it.",
+        {"name": "keyword_score", "description": "Volume, competition and overall score (0-100) for one keyword, plus search-term stats: highest/average views and age of the top results, how many use the term in the title or were uploaded in the last 7 days, average subscribers and the top channels.",
          "inputSchema": {"type": "object", "properties": {"keyword": {"type": "string"}}, "required": ["keyword"]}},
         {"name": "video_report", "description": "Full scorecard for a video: views per hour, engagement, outlier score vs the channel, tags and where it ranks for them, SEO score.",
          "inputSchema": {"type": "object", "properties": {"video": {"type": "string", "description": "Video URL or id"}}, "required": ["video"]}},
@@ -39,9 +39,12 @@ pub async fn call(engine: &Engine, name: &str, args: &Value) -> Result<Value> {
             let queries: Vec<String> = serde_json::from_value(args.get("queries").cloned().ok_or_else(|| anyhow!("missing argument: queries"))?)?;
             to_value(engine.trending(&queries, window, kind, number("limit", 40).min(100)).await?)?
         }
-        "outliers" => to_value(engine.outliers(text("query")?, window, kind).await?)?,
+        "discover" => {
+            let preset: Preset = serde_json::from_value(args.get("preset").cloned().unwrap_or(json!("outliers")))?;
+            to_value(engine.discover(text("query")?, preset).await?)?
+        }
         "keyword_research" => to_value(engine.keyword_research(text("seed")?, number("limit", 20).min(60), args.get("deep").and_then(Value::as_bool).unwrap_or(false)).await?)?,
-        "keyword_score" => to_value(engine.keyword_score(text("keyword")?).await?)?,
+        "keyword_score" => to_value(engine.keyword_score(text("keyword")?, true).await?)?,
         "video_report" => to_value(engine.video_report(text("video")?).await?)?,
         "channel_audit" => to_value(engine.channel_audit(text("channel")?).await?)?,
         "tag_suggestions" => to_value(engine.tag_suggestions(text("keyword")?, number("limit", 30)).await?)?,

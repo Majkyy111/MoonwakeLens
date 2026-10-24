@@ -7,12 +7,14 @@ YouTube research for our own videos: what is trending in a niche right now, whic
 | Tool | What you get |
 |---|---|
 | Trending | Fresh videos or Shorts for your topics (today / week / month / year), ranked by views per hour, with outlier scores and the hottest words in their titles |
-| Outliers | Videos for a search that beat their own channel's median views the most |
-| Keyword research | Autocomplete keywords scored 0-100 for volume, competition and overall opportunity |
+| Discover | Presets for any search: Outliers, Hidden gems (small channels), Underdogs (views per subscriber), Blowing up, Trending Shorts, Today's top, Evergreens, Recent uploads |
+| Keyword research | Autocomplete keywords scored 0-100 for volume, competition and overall opportunity, plus search-term stats (highest/average views, average subscribers, keyword in title, uploads in the last 7 days, top channels) |
 | Video scorecard | Views per hour, likes, comments, engagement, outlier score, tag rankings, SEO score |
 | Channel audit | Subscribers, median views for videos and Shorts, upload rate, best recent uploads, most used tags |
 | Tag suggestions | Tags the top-ranking videos for a keyword use, weighted by rank |
 | SEO check | Score and checklist for a title, description and tags before upload |
+
+Every result list can be downloaded as CSV.
 
 Outlier score = a video's views divided by the median views of its channel's recent uploads of the same kind (Shorts are compared with Shorts). Keyword scores are our own heuristics: volume combines how early YouTube autocomplete suggests the phrase with the median views of the top results; competition combines how many top results use the phrase in the title, how many come from verified channels and how strong those results are.
 
@@ -30,7 +32,7 @@ MoonwakeLens.exe mcp      run as an MCP server over stdio
 
 ## Use it from other apps
 
-- **Agents (MCP):** register `MoonwakeLens.exe mcp` as a stdio MCP server. Tools: `trending`, `outliers`, `keyword_research`, `keyword_score`, `video_report`, `channel_audit`, `tag_suggestions`, `seo_check`, `search`, `autocomplete`.
+- **Agents (MCP):** register `MoonwakeLens.exe mcp` as a stdio MCP server. Tools: `trending`, `discover`, `keyword_research`, `keyword_score`, `video_report`, `channel_audit`, `tag_suggestions`, `seo_check`, `search`, `autocomplete`.
 - **Any language (HTTP):** with the app or `serve` running, `POST http://127.0.0.1:47821/api/<tool>` with the tool's arguments as JSON. `GET /api/tools` lists the tools and their input schemas.
 - **Rust:** depend on the engine crate and call it directly.
 
