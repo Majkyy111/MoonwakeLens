@@ -33,8 +33,13 @@ fn sibling(extension: &str) -> Result<PathBuf> {
 }
 
 pub fn remove_previous() {
-    if let Ok(old) = sibling("old") {
-        let _ = std::fs::remove_file(old);
+    let Ok(exe) = std::env::current_exe() else { return };
+    let (Some(dir), Some(stem)) = (exe.parent(), exe.file_stem().and_then(|s| s.to_str())) else { return };
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(stem) && name.ends_with(".old") {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -107,9 +112,9 @@ async fn replace_executable(release: &Release) -> Result<()> {
         download(release.asset(&format!("{ASSET}.sha256"))?)
     )?;
     verify(&exe, &String::from_utf8_lossy(&signature), &String::from_utf8_lossy(&sha256))?;
-    let (current, new, old) = (std::env::current_exe()?, sibling("new")?, sibling("old")?);
+    let (current, new) = (std::env::current_exe()?, sibling("new")?);
+    let old = sibling(&format!("{}.old", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()))?;
     std::fs::write(&new, &exe)?;
-    let _ = std::fs::remove_file(&old);
     std::fs::rename(&current, &old)?;
     if let Err(error) = std::fs::rename(&new, &current) {
         std::fs::rename(&old, &current)?;

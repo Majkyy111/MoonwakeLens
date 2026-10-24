@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "moonwakelens"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "moonwakelens-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

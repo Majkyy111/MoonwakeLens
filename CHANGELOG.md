@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 - 2026-10-24
+
+- Fixed: an update failed while an older copy was still running (for example as an agent's MCP server), because the previous exe could not be moved aside. Each update now keeps the old exe under its own name, and every start removes old copies that are no longer in use.
+
 ## 0.4.0 - 2026-10-24
 
 Scores are now measured where possible and checked against outcomes.
