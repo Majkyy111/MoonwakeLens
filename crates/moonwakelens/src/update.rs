@@ -1,14 +1,16 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use base64::Engine as _;
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Serialize;
 use serde_json::Value;
-use std::io::Write;
-use std::os::windows::process::CommandExt;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 const REPO: &str = "Majkyy111/MoonwakeLens";
 const ASSET: &str = "MoonwakeLens.exe";
+const RELEASE_PUBLIC_KEY: &str = "swWauYiBQWH7bzeb3wQXeM3bt/SwNxilZemvZXtcJgg=";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -17,7 +19,13 @@ pub struct Release {
     pub version: String,
     pub notes: String,
     #[serde(skip)]
-    asset_url: String,
+    assets: Vec<(String, String)>,
+}
+
+impl Release {
+    fn asset(&self, name: &str) -> Result<&str> {
+        self.assets.iter().find(|(n, _)| n == name).map(|(_, url)| url.as_str()).ok_or_else(|| anyhow!("release v{} has no {name}", self.version))
+    }
 }
 
 fn sibling(extension: &str) -> Result<PathBuf> {
@@ -30,29 +38,8 @@ pub fn remove_previous() {
     }
 }
 
-fn github_token() -> Option<String> {
-    let mut git = Command::new("git")
-        .args(["credential", "fill"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .ok()?;
-    git.stdin.take()?.write_all(b"protocol=https\nhost=github.com\n\n").ok()?;
-    let output = git.wait_with_output().ok()?;
-    String::from_utf8(output.stdout).ok()?.lines().find_map(|line| line.strip_prefix("password=").map(String::from))
-}
-
-fn request(url: &str, accept: &str) -> reqwest::RequestBuilder {
-    let client = reqwest::Client::builder().user_agent("MoonwakeLens-updater").timeout(Duration::from_secs(180)).build().expect("http client");
-    let request = client.get(url).header("Accept", accept);
-    match github_token() {
-        Some(token) => request.bearer_auth(token),
-        None => request,
-    }
+fn client() -> reqwest::Client {
+    reqwest::Client::builder().user_agent("moonwakelens-updater").timeout(Duration::from_secs(180)).build().expect("http client")
 }
 
 fn is_newer(remote: &str, local: &str) -> bool {
@@ -61,7 +48,9 @@ fn is_newer(remote: &str, local: &str) -> bool {
 }
 
 pub async fn check() -> Result<Option<Release>> {
-    let release: Value = request(&format!("https://api.github.com/repos/{REPO}/releases/latest"), "application/vnd.github+json")
+    let release: Value = client()
+        .get(format!("https://api.github.com/repos/{REPO}/releases/latest"))
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await?
         .error_for_status()?
@@ -71,18 +60,33 @@ pub async fn check() -> Result<Option<Release>> {
     if !is_newer(tag, VERSION) {
         return Ok(None);
     }
-    let asset_url = release["assets"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|a| a["name"] == ASSET)
-        .and_then(|a| a["url"].as_str())
-        .ok_or_else(|| anyhow!("release {tag} has no {ASSET}"))?;
     Ok(Some(Release {
         version: tag.trim_start_matches('v').into(),
         notes: release["body"].as_str().unwrap_or_default().into(),
-        asset_url: asset_url.into(),
+        assets: release["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| Some((a["name"].as_str()?.to_string(), a["browser_download_url"].as_str()?.to_string())))
+            .collect(),
     }))
+}
+
+async fn download(url: &str) -> Result<Vec<u8>> {
+    Ok(client().get(url).send().await?.error_for_status()?.bytes().await?.to_vec())
+}
+
+pub fn verify(exe: &[u8], signature_base64: &str, sha256_hex: &str) -> Result<()> {
+    let digest = format!("{:x}", Sha256::digest(exe));
+    if !sha256_hex.trim().eq_ignore_ascii_case(&digest) {
+        bail!("the downloaded update does not match its published SHA-256");
+    }
+    let engine = base64::engine::general_purpose::STANDARD;
+    let key: [u8; 32] = engine.decode(RELEASE_PUBLIC_KEY)?.try_into().map_err(|_| anyhow!("bad release key"))?;
+    let signature: [u8; 64] = engine.decode(signature_base64.trim())?.try_into().map_err(|_| anyhow!("the update signature is malformed"))?;
+    VerifyingKey::from_bytes(&key)?
+        .verify_strict(exe, &Signature::from_bytes(&signature))
+        .map_err(|_| anyhow!("the update is not signed by the MoonwakeLens release key"))
 }
 
 pub async fn install(release: &Release) -> Result<()> {
@@ -97,9 +101,14 @@ pub async fn install(release: &Release) -> Result<()> {
 }
 
 async fn replace_executable(release: &Release) -> Result<()> {
-    let bytes = request(&release.asset_url, "application/octet-stream").send().await?.error_for_status()?.bytes().await?;
+    let (exe, signature, sha256) = tokio::try_join!(
+        download(release.asset(ASSET)?),
+        download(release.asset(&format!("{ASSET}.sig"))?),
+        download(release.asset(&format!("{ASSET}.sha256"))?)
+    )?;
+    verify(&exe, &String::from_utf8_lossy(&signature), &String::from_utf8_lossy(&sha256))?;
     let (current, new, old) = (std::env::current_exe()?, sibling("new")?, sibling("old")?);
-    std::fs::write(&new, &bytes)?;
+    std::fs::write(&new, &exe)?;
     let _ = std::fs::remove_file(&old);
     std::fs::rename(&current, &old)?;
     if let Err(error) = std::fs::rename(&new, &current) {
@@ -114,23 +123,23 @@ pub fn relaunch(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-pub async fn apply_at_startup() -> bool {
-    let Ok(Ok(Some(release))) = tokio::time::timeout(Duration::from_secs(8), check()).await else { return false };
-    install(&release).await.is_ok() && relaunch(&[]).is_ok()
-}
-
-pub async fn install_in_background() {
-    if let Ok(Some(release)) = check().await {
-        let _ = install(&release).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn compares_versions() {
-        assert!(super::is_newer("v0.2.0", "0.1.9"));
-        assert!(super::is_newer("0.1.10", "0.1.9"));
-        assert!(!super::is_newer("v0.1.0", "0.1.0"));
+        assert!(is_newer("v0.2.0", "0.1.9"));
+        assert!(is_newer("0.1.10", "0.1.9"));
+        assert!(!is_newer("v0.1.0", "0.1.0"));
+    }
+
+    #[test]
+    fn rejects_tampered_or_unsigned_updates() {
+        let exe = b"not really an exe";
+        let sha = format!("{:x}", Sha256::digest(exe));
+        let fake_signature = base64::engine::general_purpose::STANDARD.encode([7u8; 64]);
+        assert!(verify(exe, &fake_signature, &sha).unwrap_err().to_string().contains("not signed"));
+        assert!(verify(exe, &fake_signature, "00").unwrap_err().to_string().contains("SHA-256"));
     }
 }

@@ -8,6 +8,8 @@ pub struct VideoSummary {
     pub channel_name: Option<String>,
     pub views: Option<u64>,
     pub age_hours: Option<f64>,
+    #[serde(skip)]
+    pub age_precision_hours: Option<f64>,
     pub duration_seconds: Option<u64>,
     pub is_short: bool,
     pub verified_channel: bool,
@@ -55,10 +57,43 @@ pub struct ChannelInfo {
     pub recent_shorts: Vec<VideoSummary>,
 }
 
+pub const MIN_BASELINE_AGE_HOURS: f64 = 168.0;
+pub const MIN_SHORT_BASELINE_AGE_HOURS: f64 = 72.0;
+
 impl ChannelInfo {
-    pub fn baseline(&self, short: bool) -> Option<u64> {
-        let videos = if short { &self.recent_shorts } else { &self.recent_videos };
-        (videos.iter().filter(|v| v.views.is_some()).count() >= 3).then(|| crate::metrics::median_views(videos)).flatten()
+    pub fn baseline(&self, short: bool) -> Option<crate::metrics::Spread> {
+        let (videos, min_age) = if short { (&self.recent_shorts, MIN_SHORT_BASELINE_AGE_HOURS) } else { (&self.recent_videos, MIN_BASELINE_AGE_HOURS) };
+        let views: Vec<u64> = videos.iter().filter(|v| v.age_hours.is_none_or(|age| age >= min_age)).filter_map(|v| v.views).collect();
+        if views.len() < 3 {
+            return None;
+        }
+        crate::metrics::spread(views)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn video(views: u64, age_hours: Option<f64>) -> VideoSummary {
+        VideoSummary { views: Some(views), age_hours, ..Default::default() }
+    }
+
+    #[test]
+    fn baseline_leaves_out_uploads_that_are_too_young() {
+        let channel = ChannelInfo {
+            id: String::new(),
+            name: String::new(),
+            handle: None,
+            description: String::new(),
+            keywords: vec![],
+            subscribers: None,
+            video_count: None,
+            recent_videos: vec![video(10, Some(5.0)), video(20, Some(30.0)), video(1000, Some(200.0)), video(2000, Some(400.0)), video(3000, Some(900.0))],
+            recent_shorts: vec![video(5, Some(10.0)), video(500, None), video(600, Some(100.0)), video(700, None)],
+        };
+        assert_eq!(channel.baseline(false).map(|s| (s.median, s.n)), Some((2000, 3)));
+        assert_eq!(channel.baseline(true).map(|s| (s.median, s.n)), Some((600, 3)));
     }
 }
 

@@ -1,0 +1,16 @@
+name: YouTube format check
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch a fixed video, channel, search and autocomplete from YouTube
+        run: cargo test -p moonwakelens-core --test smoke -- --include-ignored

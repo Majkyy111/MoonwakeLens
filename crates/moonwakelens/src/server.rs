@@ -68,6 +68,7 @@ pub async fn run(engine: Arc<Engine>, launch: Launch) -> anyhow::Result<()> {
     if launch != Launch::Headless {
         tokio::spawn(exit_when_window_closes(state.last_ping));
     }
+    tokio::spawn(track_while_running(state.engine.clone()));
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -85,6 +86,15 @@ async fn exit_when_window_closes(last_ping: Arc<AtomicU64>) {
         if now().saturating_sub(last_ping.load(Ordering::Relaxed)) > WINDOW_GONE_AFTER_SECONDS {
             std::process::exit(0);
         }
+    }
+}
+
+async fn track_while_running(engine: Arc<Engine>) {
+    loop {
+        if engine.tracking_due() {
+            let _ = engine.tracking_pass().await;
+        }
+        tokio::time::sleep(Duration::from_secs(600)).await;
     }
 }
 

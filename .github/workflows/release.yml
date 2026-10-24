@@ -15,8 +15,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --release
+      - name: Unit tests and YouTube smoke tests
+        run: cargo test --release -- --include-ignored
       - run: cargo build --release
+      - name: Sign the release
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          pip install --quiet pynacl
+          python - <<'EOF'
+          import base64, hashlib, os, nacl.signing
+          exe = open("target/release/MoonwakeLens.exe", "rb").read()
+          key = nacl.signing.SigningKey(base64.b64decode(os.environ["SIGNING_KEY"]))
+          open("target/release/MoonwakeLens.exe.sig", "w").write(base64.b64encode(key.sign(exe).signature).decode())
+          open("target/release/MoonwakeLens.exe.sha256", "w").write(hashlib.sha256(exe).hexdigest())
+          EOF
       - name: Publish a release when the version is new
         shell: bash
         env:
@@ -26,5 +40,7 @@ jobs:
           if gh release view "v$version" > /dev/null 2>&1; then
             echo "v$version is already released"
           else
-            gh release create "v$version" target/release/MoonwakeLens.exe --title "MoonwakeLens v$version" --generate-notes
+            notes=$(awk -v v="## $version" '$0 ~ "^## " {p = index($0, v) == 1} p' CHANGELOG.md | tail -n +2)
+            gh release create "v$version" target/release/MoonwakeLens.exe target/release/MoonwakeLens.exe.sig target/release/MoonwakeLens.exe.sha256 \
+              --title "MoonwakeLens v$version" --notes "${notes:-See CHANGELOG.md}"
           fi

@@ -7,6 +7,9 @@ description = "MoonwakeLens desktop app: YouTube trend research dashboard with a
 [dependencies]
 anyhow.workspace = true
 axum = "0.8"
+base64 = "0.22"
+ed25519-dalek = "2"
+sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 serde.workspace = true
 serde_json.workspace = true

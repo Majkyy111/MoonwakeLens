@@ -81,7 +81,7 @@ pub fn parse_count(text: &str) -> Option<u64> {
     Some((n * multiplier).round() as u64)
 }
 
-pub fn parse_age_hours(text: &str) -> Option<f64> {
+fn age_parts(text: &str) -> Option<(f64, f64)> {
     let lower = text.to_lowercase();
     let words: Vec<&str> = lower.split_whitespace().collect();
     let pos = words.iter().position(|w| w.chars().all(|c| c.is_ascii_digit()))?;
@@ -91,7 +91,15 @@ pub fn parse_age_hours(text: &str) -> Option<f64> {
         .iter()
         .find(|(name, _)| unit.starts_with(name))?
         .1;
-    Some(n * hours)
+    Some((n, hours))
+}
+
+pub fn parse_age_hours(text: &str) -> Option<f64> {
+    age_parts(text).map(|(n, unit)| n * unit)
+}
+
+pub fn age_unit_hours(text: &str) -> Option<f64> {
+    age_parts(text).map(|(_, unit)| unit)
 }
 
 pub fn parse_duration(text: &str) -> Option<u64> {

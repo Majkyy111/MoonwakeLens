@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
-const CLIENT_VERSION: &str = "2.20261020.00.00";
 const VIDEOS_TAB: &str = "EgZ2aWRlb3PyBgQKAjoA";
 const SHORTS_TAB: &str = "EgZzaG9ydHPyBgUKA5oBAA==";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
@@ -72,13 +71,42 @@ pub struct YouTube {
     http: reqwest::Client,
     hl: String,
     gl: String,
+    client_version: String,
     cache: Mutex<HashMap<String, (Instant, Arc<Value>)>>,
     ttl: Duration,
     in_flight: Semaphore,
 }
 
+const RETRY_DELAYS_SECONDS: [u64; 3] = [1, 3, 8];
+
+async fn fetch_with_backoff(request: impl Fn() -> reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    for (attempt, delay) in RETRY_DELAYS_SECONDS.iter().enumerate() {
+        let response = request().send().await?;
+        let status = response.status().as_u16();
+        if status != 429 && status != 503 {
+            return Ok(response.error_for_status()?);
+        }
+        if attempt + 1 == RETRY_DELAYS_SECONDS.len() {
+            return Err(anyhow!("YouTube is rate limiting this PC (HTTP {status}); try again in a few minutes"));
+        }
+        tokio::time::sleep(Duration::from_secs(*delay)).await;
+    }
+    unreachable!()
+}
+
+async fn json_body(response: reqwest::Response) -> Result<Value> {
+    let body = response.text().await?;
+    serde_json::from_str(&body).map_err(|_| {
+        if body.contains("consent.youtube.com") || body.contains("consent.google.com") {
+            anyhow!("YouTube answered with a cookie consent page instead of data")
+        } else {
+            anyhow!("YouTube answered with something that is not JSON; it may be blocking requests or have changed its API")
+        }
+    })
+}
+
 impl YouTube {
-    pub fn new(hl: &str, gl: &str) -> Self {
+    pub fn new(hl: &str, gl: &str, client_version: &str) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .user_agent(USER_AGENT)
@@ -87,6 +115,7 @@ impl YouTube {
                 .expect("http client"),
             hl: hl.into(),
             gl: gl.into(),
+            client_version: client_version.into(),
             cache: Mutex::new(HashMap::new()),
             ttl: Duration::from_secs(600),
             in_flight: Semaphore::new(MAX_IN_FLIGHT),
@@ -107,21 +136,17 @@ impl YouTube {
     }
 
     async fn innertube(&self, endpoint: &str, mut body: Value) -> Result<Arc<Value>> {
-        body["context"] = json!({"client": {"clientName": "WEB", "clientVersion": CLIENT_VERSION, "hl": self.hl, "gl": self.gl}});
+        body["context"] = json!({"client": {"clientName": "WEB", "clientVersion": self.client_version, "hl": self.hl, "gl": self.gl}});
         let key = format!("{endpoint}|{body}");
         if let Some(hit) = self.cached(&key) {
             return Ok(hit);
         }
         let _permit = self.in_flight.acquire().await?;
-        let value: Value = self
-            .http
-            .post(format!("https://www.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false"))
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let url = format!("https://www.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false");
+        let value = json_body(fetch_with_backoff(|| self.http.post(&url).json(&body)).await?).await?;
+        if let Some(error) = value.get("error") {
+            return Err(anyhow!("YouTube rejected the request: {}", error.get("message").and_then(Value::as_str).unwrap_or("unknown error")));
+        }
         Ok(self.store(key, value))
     }
 
@@ -131,15 +156,14 @@ impl YouTube {
             Some(hit) => hit,
             None => {
                 let _permit = self.in_flight.acquire().await?;
-                let raw = self
-                    .http
-                    .get("https://suggestqueries-clients6.youtube.com/complete/search")
-                    .query(&[("client", "youtube"), ("ds", "yt"), ("hl", self.hl.as_str()), ("gl", self.gl.as_str()), ("q", query)])
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .text()
-                    .await?;
+                let raw = fetch_with_backoff(|| {
+                    self.http
+                        .get("https://suggestqueries-clients6.youtube.com/complete/search")
+                        .query(&[("client", "youtube"), ("ds", "yt"), ("hl", self.hl.as_str()), ("gl", self.gl.as_str()), ("q", query)])
+                })
+                .await?
+                .text()
+                .await?;
                 let (start, end) = raw.find('(').zip(raw.rfind(')')).ok_or_else(|| anyhow!("unexpected autocomplete response"))?;
                 self.store(key, serde_json::from_str(&raw[start + 1..end])?)
             }
@@ -161,6 +185,9 @@ impl YouTube {
             body["params"] = json!(params);
         }
         let first_page = self.innertube("search", body).await?;
+        if first_page.get("contents").is_none() {
+            return Err(anyhow!("YouTube search returned no result list; its response format may have changed"));
+        }
         let estimated_results = first_page
             .get("estimatedResults")
             .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
@@ -170,7 +197,7 @@ impl YouTube {
         for page_index in 0..pages.max(1) {
             for summary in search_results(&page) {
                 if !results.iter().any(|r: &VideoSummary| r.id == summary.id) {
-                    results.push(summary);
+                    results.push(VideoSummary { is_short: summary.is_short || kind == Kind::Short, ..summary });
                 }
             }
             let token = all(&page, "continuationItemRenderer").last().and_then(|c| first_str(c, "token"));
@@ -225,8 +252,6 @@ impl YouTube {
         let meta = home.pointer("/metadata/channelMetadataRenderer").ok_or_else(|| anyhow!("channel not found: {input}"))?;
         let field = |k: &str| meta.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         let name = field("title");
-        let header_texts: Vec<&str> = home.get("header").map(|h| all(h, "content")).unwrap_or_default().into_iter().filter_map(Value::as_str).collect();
-        let header_count = |suffix: &str| header_texts.iter().find(|t| t.ends_with(suffix)).and_then(|t| parse_count(t));
 
         let (recent_videos, recent_shorts) = futures::try_join!(
             self.paged(videos_tab, max_videos, |page| channel_videos(page, &id, &name)),
@@ -237,13 +262,17 @@ impl YouTube {
             handle: field("vanityChannelUrl").rsplit('/').next().filter(|h| h.starts_with('@')).map(String::from),
             description: field("description"),
             keywords: split_keywords(&field("keywords")),
-            subscribers: header_count("subscribers"),
-            video_count: header_count("videos"),
+            subscribers: header_count(&home, "subscribers"),
+            video_count: header_count(&home, "videos"),
             id,
             name,
             recent_videos,
             recent_shorts,
         })
+    }
+
+    pub async fn subscribers(&self, id: &str) -> Result<Option<u64>> {
+        Ok(header_count(&*self.innertube("browse", json!({"browseId": id})).await?, "subscribers"))
     }
 
     pub async fn channel_about(&self, id: &str) -> Result<ChannelAbout> {
@@ -275,6 +304,10 @@ impl YouTube {
     }
 }
 
+fn header_count(home: &Value, suffix: &str) -> Option<u64> {
+    all(home.get("header")?, "content").into_iter().filter_map(Value::as_str).find(|t| t.ends_with(suffix)).and_then(parse_count)
+}
+
 fn channel_shorts(page: &Value, channel_id: &str, channel_name: &str) -> Vec<VideoSummary> {
     all(page, "shortsLockupViewModel")
         .into_iter()
@@ -301,6 +334,7 @@ fn from_video_renderer(r: &Value) -> Option<VideoSummary> {
             channel_name: owner.and_then(text),
             views: label("viewCountText").and_then(|t| parse_count(&t)),
             age_hours: label("publishedTimeText").and_then(|t| parse_age_hours(&t)),
+            age_precision_hours: label("publishedTimeText").and_then(|t| age_unit_hours(&t)),
             duration_seconds: label("lengthText").and_then(|t| parse_duration(&t)),
             verified_channel: r.get("ownerBadges").is_some_and(|b| b.to_string().contains("VERIFIED")),
             has_captions: r.get("badges").is_some_and(|b| b.to_string().contains("\"CC\"")),
@@ -338,6 +372,7 @@ fn channel_videos(page: &Value, channel_id: &str, channel_name: &str) -> Vec<Vid
                     channel_name: Some(channel_name.to_string()),
                     views: parts.iter().find(|p| p.contains("view")).and_then(|p| parse_count(p)),
                     age_hours: parts.iter().find(|p| p.contains("ago")).and_then(|p| parse_age_hours(p)),
+                    age_precision_hours: parts.iter().find(|p| p.contains("ago")).and_then(|p| age_unit_hours(p)),
                     duration_seconds: all(l, "thumbnailBadgeViewModel").into_iter().filter_map(|b| b.get("text")?.as_str()).find_map(parse_duration),
                     ..Default::default()
                 }
@@ -348,6 +383,10 @@ fn channel_videos(page: &Value, channel_id: &str, channel_name: &str) -> Vec<Vid
 }
 
 fn details_from_player(player: &Value) -> Result<VideoDetails> {
+    let status = player.pointer("/playabilityStatus/reason").and_then(Value::as_str).unwrap_or_default();
+    if status.to_lowercase().contains("bot") {
+        return Err(anyhow!("YouTube asked for a bot check ({status}); wait a while before trying again"));
+    }
     let vd = player.get("videoDetails").ok_or_else(|| anyhow!("video not found or unavailable"))?;
     let mf = player.pointer("/microformat/playerMicroformatRenderer");
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(String::from);

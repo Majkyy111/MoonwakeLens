@@ -50,6 +50,12 @@ button.ghost { background: var(--panel-2); border: 1px solid var(--line); border
 .thumb .mult { left: 8px; top: 8px; }
 .mult.warm { background: var(--mid); color: #1a1200; }
 .mult.hot { background: var(--hot); color: #fff; }
+.mult.unsure { outline: 2px dashed #ffffffaa; outline-offset: -2px; }
+.muted { color: var(--muted); }
+.history { display: flex; gap: 16px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.spark { width: 260px; height: 40px; }
+.spark polyline { fill: none; stroke: var(--accent-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+input[type=file] { padding: 7px; }
 .meta { padding: 10px 12px 12px; display: grid; gap: 4px; }
 .title { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .chan { color: var(--muted); font-size: 12px; }
@@ -103,6 +109,9 @@ h2 .ghost { font-size: 12px; margin-left: 8px; vertical-align: middle; }
     <button data-view="channel">Channel</button>
     <button data-view="tags">Tags</button>
     <button data-view="seo">SEO check</button>
+    <button data-view="tracking">Tracking</button>
+    <button data-view="backtest">Backtest</button>
+    <button data-view="calibrate">Calibrate</button>
     <div class="foot"><span id="version">MoonwakeLens</span><button id="update" class="hidden"></button></div>
   </nav>
   <main>
@@ -149,7 +158,7 @@ h2 .ghost { font-size: 12px; margin-left: 8px; vertical-align: middle; }
     </section>
     <section id="video" class="hidden">
       <h1>Video scorecard</h1>
-      <p class="sub">Paste any video link: views per hour, engagement, outlier score, tag rankings and SEO.</p>
+      <p class="sub">Paste any video link: views per hour (measured over the last 24 h once tracked), engagement, outlier score with its confidence, tag rankings and SEO.</p>
       <form class="bar">
         <label class="grow">Video link or id<input name="video" placeholder="https://www.youtube.com/watch?v=..." required></label>
         <button class="go">Analyze</button>
@@ -186,6 +195,39 @@ h2 .ghost { font-size: 12px; margin-left: 8px; vertical-align: middle; }
       </form>
       <div class="out"></div>
     </section>
+    <section id="tracking" class="hidden">
+      <h1>Tracking</h1>
+      <p class="sub">Channels and videos MoonwakeLens re-checks every few hours. Their snapshots give measured views per hour, same-age outlier scores and backtests.</p>
+      <form class="bar">
+        <label class="grow">Channel or video<input name="target" placeholder="@handle, channel link or video link"></label>
+        <button class="go">Track</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="backtest" class="hidden">
+      <h1>Backtest</h1>
+      <p class="sub">Save a video's scores before you upload it. After 7 days MoonwakeLens compares them with its real views. This is the honesty check for every score.</p>
+      <form class="bar">
+        <label class="grow">Title<input name="title" placeholder="Leave empty to just refresh the report"></label>
+        <label class="grow">Target keyword<input name="keyword"></label>
+        <label class="grow">Video link (if uploaded)<input name="video"></label>
+        <label style="width:100%">Description<textarea name="description"></textarea></label>
+        <label class="grow">Tags (comma separated)<input name="tags"></label>
+        <button class="go">Save prediction</button>
+      </form>
+      <div class="out"></div>
+    </section>
+    <section id="calibrate" class="hidden">
+      <h1>Calibrate</h1>
+      <p class="sub">Fit the keyword volume to our real search views: export the search-terms report (search_term, views, impressions, period) from YouTube Analytics or Moonwake Studio as CSV or JSON.</p>
+      <form class="bar">
+        <label class="grow">Search-terms file<input type="file" name="file" accept=".csv,.json,.txt"></label>
+        <label class="check"><input type="checkbox" name="use_trends" checked> Use Google Trends</label>
+        <label class="check"><input type="checkbox" name="apply"> Save the fitted weights</label>
+        <button class="go">Calibrate</button>
+      </form>
+      <div class="out"></div>
+    </section>
   </main>
 </div>
 <script>
@@ -206,13 +248,19 @@ async function api(tool, args) {
   return data;
 }
 
+const outlierText = v => v.outlier_score == null ? "–" : v.outlier_low != null ? `${v.outlier_low.toFixed(1)}–${v.outlier_high.toFixed(1)}×` : `${v.outlier_score.toFixed(1)}×`;
+const outlierNote = v => v.outlier_score == null ? "No channel baseline" : `Views ÷ median of ${v.baseline_videos} older uploads · ${v.outlier_confidence} confidence`;
+const measured = v => v.views_per_hour_basis === "last_24_hours";
+const rangeText = r => r ? `<small> ${r[0]}–${r[1]}</small>` : "";
+const arrow = t => !t ? "" : t.direction === "rising" ? `<span class="good" title="Overall ${t.overall_change > 0 ? "+" : ""}${t.overall_change} since ${t.since_day}"> ▲</span>` : t.direction === "falling" ? `<span class="bad" title="Overall ${t.overall_change} since ${t.since_day}"> ▼</span>` : `<span class="muted" title="Flat since ${t.since_day}"> ▬</span>`;
+
 function card(v) {
-  const multiple = v.outlier_score == null ? "" : `<span class="mult ${v.outlier_score >= 3 ? "hot" : v.outlier_score >= 1.5 ? "warm" : ""}">${v.outlier_score.toFixed(1)}×</span>`;
+  const multiple = v.outlier_score == null ? "" : `<span class="mult ${v.outlier_score >= 3 ? "hot" : v.outlier_score >= 1.5 ? "warm" : ""} ${v.outlier_confidence === "low" ? "unsure" : ""}" title="${esc(outlierNote(v))}">${outlierText(v)}</span>`;
   return `<a class="card" href="${watchUrl(v)}" target="_blank">
     <div class="thumb${v.is_short ? " short" : ""}"><img loading="lazy" src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="">${multiple}
       ${v.is_short ? '<span class="kind">Short</span>' : ""}${v.duration_seconds && !v.is_short ? `<span class="dur">${clock(v.duration_seconds)}</span>` : ""}</div>
     <div class="meta"><div class="title">${esc(v.title)}</div><div class="chan">${esc(v.channel_name || "")}</div>
-      <div class="stats"><span><b>${num(v.views)}</b> views</span>${v.views_per_hour == null ? "" : `<span class="vph"><b>${num(v.views_per_hour)}</b>/hour</span>`}${v.age_hours == null ? "" : `<span>${ago(v.age_hours)} ago</span>`}</div></div></a>`;
+      <div class="stats"><span><b>${num(v.views)}</b> views</span>${v.views_per_hour == null ? "" : `<span class="vph" title="${measured(v) ? "Measured from snapshots over the last 24 hours" : "Lifetime average (no snapshots yet)"}"><b>${num(v.views_per_hour)}</b>/h ${measured(v) ? "24h" : "avg"}</span>`}${v.age_hours == null ? "" : `<span>${ago(v.age_hours)} ago</span>`}${v.same_age_outlier == null ? "" : `<span title="Views vs ${v.same_age_sample} uploads of this channel at the same age">same age <b>${v.same_age_outlier.toFixed(1)}×</b></span>`}</div></div></a>`;
 }
 
 const views = {
@@ -231,18 +279,22 @@ const views = {
   },
   async keywords(form) {
     const data = await api("keyword_research", {seed: form.seed.value, limit: +form.limit.value, deep: form.deep.checked});
-    exportRows = data.map(k => ({keyword: k.keyword, overall: k.overall, volume: k.volume, competition: k.competition, median_top_views: k.median_top_views, average_views: k.average_views, uploaded_last_7_days: k.uploaded_last_7_days, results: k.estimated_results}));
-    return `<div id="keyword-detail"></div><h2>${data.length} keywords ${csvButton}</h2><table><tr><th>Keyword</th><th>Overall</th><th>Volume</th><th>Competition</th><th>Top videos' median views</th><th>New this week</th><th></th></tr>${data.map(k => `
-      <tr><td><b>${esc(k.keyword)}</b></td><td>${scoreBar(k.overall)}</td><td>${scoreBar(k.volume)}</td><td>${scoreBar(100 - k.competition).replace(`<b>${100 - k.competition}</b>`, `<b>${k.competition}</b>`)}</td>
+    exportRows = data.map(k => ({keyword: k.keyword, overall: k.overall, volume: k.volume, competition: k.competition, confidence: k.confidence, sample_size: k.sample_size, trend: k.trend?.direction, median_top_views: k.median_top_views, average_views: k.average_views, uploaded_last_7_days: k.uploaded_last_7_days, results: k.estimated_results}));
+    return `<div id="keyword-detail"></div><h2>${data.length} keywords ${csvButton}</h2><table><tr><th>Keyword</th><th>Overall</th><th>Volume</th><th>Competition</th><th>Confidence</th><th>Top videos' median views</th><th>New this week</th><th></th></tr>${data.map(k => `
+      <tr><td><b>${esc(k.keyword)}</b>${arrow(k.trend)}</td><td>${scoreBar(k.overall)}${rangeText(k.overall_range)}</td><td>${scoreBar(k.volume)}${rangeText(k.volume_range)}</td><td>${scoreBar(100 - k.competition).replace(`<b>${100 - k.competition}</b>`, `<b>${k.competition}</b>`)}${rangeText(k.competition_range)}</td>
+      <td><span class="pill ${k.confidence === "high" ? "good" : k.confidence === "medium" ? "mid" : "bad"}" title="${k.sample_size} top results">${k.confidence}</span></td>
       <td class="num">${num(k.median_top_views)}</td><td class="num">${k.uploaded_last_7_days}/${k.sample_size}</td>
       <td><button class="ghost" data-keyword="${esc(k.keyword)}">Stats</button> <button class="ghost" data-goto="tags" data-value="${esc(k.keyword)}">Tags</button> <button class="ghost" data-goto="discover" data-value="${esc(k.keyword)}">Outliers</button></td></tr>`).join("")}</table>`;
   },
   async video(form) {
     const r = await api("video_report", {video: form.video.value});
-    const v = r.video;
-    const tiles = [["Views", num(v.views)], ["Views / hour", num(r.views_per_hour)], ["Likes", num(v.likes)], ["Comments", num(v.comments)], ["Engagement", pct(r.engagement_rate)],
-      ["Outlier", r.outlier_score == null ? "–" : r.outlier_score.toFixed(1) + "×"], ["Channel median", num(r.channel_median_views)], ["Subscribers", num(r.channel_subscribers)], ["Views / subscriber", r.views_per_subscriber?.toFixed(2) ?? "–"], ["Age", ago(v.age_hours)]];
-    return `<div class="hero"><img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt=""><div><h3><a href="https://www.youtube.com/watch?v=${v.id}" target="_blank">${esc(v.title)}</a></h3><div class="chan">${esc(v.channel_name)} · ${esc(v.category || "")} · ${clock(v.duration_seconds)}</div></div></div>
+    const v = r.video, p = r.performance;
+    const tiles = [["Views", num(v.views)], [measured(p) ? "Views / hour, last 24h" : "Views / hour, lifetime avg", num(p.views_per_hour)], ["Acceleration", p.acceleration == null ? "–" : p.acceleration.toFixed(2) + "×"],
+      ["Likes", num(v.likes)], ["Comments", num(v.comments)], ["Engagement", pct(r.engagement_rate)],
+      ["Outlier" + (p.outlier_confidence ? ` <small>${p.outlier_confidence}</small>` : ""), outlierText(p)], ["Same-age outlier", p.same_age_outlier == null ? "–" : `${p.same_age_outlier.toFixed(1)}× <small>n=${p.same_age_sample}</small>`],
+      [`Channel median <small>n=${p.baseline_videos}</small>`, num(p.channel_median_views)], ["Subscribers", num(p.channel_subscribers)], ["Views / subscriber", r.views_per_subscriber?.toFixed(2) ?? "–"], ["Age", ago(v.age_hours)]];
+    return `<div class="hero"><img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt=""><div><h3><a href="https://www.youtube.com/watch?v=${v.id}" target="_blank">${esc(v.title)}</a></h3><div class="chan">${esc(v.channel_name)} · ${esc(v.category || "")} · ${clock(v.duration_seconds)}</div>
+      <p><button class="ghost" data-track="${v.id}">Track this video</button></p></div></div>
       <div class="tiles">${tiles.map(([k, val]) => `<div class="tile"><span>${k}</span><b>${val}</b></div>`).join("")}</div>
       <h2>Tags and where this video ranks for them</h2>
       <div class="chips">${r.tag_ranks.map(t => `<span class="chip">${esc(t.tag)}<small>${t.rank ? "#" + t.rank : "not in top 20"}</small></span>`).join("") || '<span class="sub">No tags</span>'}${v.tags.slice(8).map(t => `<span class="chip">${esc(t)}</span>`).join("")}</div>
@@ -256,7 +308,7 @@ const views = {
       ["Country", esc(a.about.country || "–")], ["Joined", esc(a.about.joined || "–")], ["Median video views", num(a.median_views)], ["Median Short views", num(a.median_short_views)], ["Average video views", num(a.average_views)], ["Videos / week", a.uploads_per_week?.toFixed(1) ?? "–"], ["Last video", ago(a.last_upload_hours) + " ago"]];
     const bestFirst = list => [...list].sort((x, y) => (y.outlier_score ?? 0) - (x.outlier_score ?? 0));
     exportRows = [...a.shorts, ...a.videos].map(videoRow);
-    return `<div class="hero"><div><h3><a href="https://www.youtube.com/channel/${c.id}" target="_blank">${esc(c.name)}</a></h3><div class="chan">${esc(c.handle || "")}</div></div></div>
+    return `<div class="hero"><div><h3><a href="https://www.youtube.com/channel/${c.id}" target="_blank">${esc(c.name)}</a></h3><div class="chan">${esc(c.handle || "")}</div><p><button class="ghost" data-track="${c.id}">Track this channel</button></p></div></div>
       <div class="tiles">${tiles.map(([k, val]) => `<div class="tile"><span>${k}</span><b>${val}</b></div>`).join("")}</div>
       <p>${csvButton}</p><h2>Most used tags</h2><div class="chips">${a.top_tags.map(t => `<span class="chip">${esc(t.tag)}<small>${t.count}×</small></span>`).join("") || '<span class="sub">No tags</span>'}</div>
       ${a.shorts.length ? `<h2>Recent Shorts, best performers first</h2><div class="grid">${bestFirst(a.shorts).map(card).join("")}</div>` : ""}
@@ -264,7 +316,7 @@ const views = {
   },
   async tags(form) {
     const data = await api("tag_suggestions", {keyword: form.keyword.value, limit: 30});
-    return `<p><button class="ghost" id="copy-tags">Copy all tags</button></p>
+    return `<p><button class="ghost" id="copy-tags">Copy all tags</button> <span class="sub">${data[0] ? `From ${data[0].sampled_videos} top videos with tags · ${data[0].confidence} confidence` : ""}</span></p>
       <table><tr><th>Tag</th><th>Score</th><th>Used by top videos</th></tr>${data.map(t => `<tr><td>${esc(t.tag)}</td><td>${scoreBar(t.score)}</td><td class="num">${t.used_by} of 10</td></tr>`).join("")}</table>
       <textarea id="tag-list" class="hidden">${esc(data.map(t => t.tag).join(", "))}</textarea>`;
   },
@@ -272,11 +324,67 @@ const views = {
     const tags = form.tags.value.split(",").map(t => t.trim()).filter(Boolean);
     return seoBlock(await api("seo_check", {title: form.title.value, description: form.description.value, tags, keyword: form.keyword.value || null}));
   },
+  async tracking(form) {
+    return trackedTable(form.target.value ? await api("track", {target: form.target.value}) : await api("tracked", {}));
+  },
+  async backtest(form) {
+    if (form.title.value) {
+      const tags = form.tags.value.split(",").map(t => t.trim()).filter(Boolean);
+      await api("predict", {title: form.title.value, keyword: form.keyword.value || null, video: form.video.value || null, description: form.description.value, tags});
+      form.reset();
+    }
+    return backtestReport(await api("backtest", {}));
+  },
+  async calibrate(form) {
+    const file = form.file.files[0];
+    if (!file) throw new Error("Choose the search-terms CSV or JSON first.");
+    const r = await api("calibrate", {data: await file.text(), apply: form.apply.checked, use_trends: form.use_trends.checked});
+    const fit = (label, f) => `<tr><td>${label}</td><td class="num">${f.spearman == null ? "–" : f.spearman.toFixed(2)}</td><td class="num">${f.mean_abs_error_log10.toFixed(2)}</td></tr>`;
+    exportRows = r.rows;
+    return `<h2>${r.terms_used} of ${r.terms_in_file} search terms used · inputs: ${r.features.join(", ")} · ${r.applied ? "weights saved" : "weights not saved"}</h2>
+      ${r.notes.map(n => `<p class="sub">${esc(n)}</p>`).join("")}
+      <table><tr><th>Volume estimate</th><th>Rank match with real views (Spearman)</th><th>Typical error (log10 views)</th></tr>
+      ${fit("Before (current weights)", r.before)}${fit("After, same data", r.after_in_sample)}${fit("After, leave-one-out (honest)", r.after_cross_validated)}</table>
+      <h2>Per term ${csvButton}</h2><table><tr><th>Search term</th><th>Real views</th><th>Volume before</th><th>Volume after</th><th>Estimated views after</th></tr>
+      ${r.rows.map(row => `<tr><td>${esc(row.search_term)}</td><td class="num">${num(row.actual_views)}</td><td class="num">${row.volume_before}</td><td class="num">${row.volume_after}</td><td class="num">${num(row.estimated_views_after)}</td></tr>`).join("")}</table>`;
+  },
 };
+
+const loaders = {
+  tracking: async out => { out.innerHTML = trackedTable(await api("tracked", {})); },
+  backtest: async out => { out.innerHTML = backtestReport(await api("backtest", {})); },
+};
+
+function trackedTable(list) {
+  if (!list.length) return `<p class="sub">Nothing tracked yet. Track your own channels and competitors; MoonwakeLens re-checks them every few hours.</p>`;
+  return `<p><button class="ghost" data-action="tracking_pass">Check everything now</button></p><table><tr><th>What</th><th>Name</th><th>Snapshots</th><th>Last checked</th><th></th></tr>${list.map(t => `
+    <tr><td>${t.kind}</td><td>${esc(t.name || t.id)}</td><td class="num">${t.snapshots}</td><td>${t.last_checked ? ago((Date.now() / 1000 - t.last_checked) / 3600) + " ago" : "not yet"}</td>
+    <td><button class="ghost" data-untrack="${esc(t.id)}">Stop</button></td></tr>`).join("")}</table>`;
+}
+
+function backtestReport(r) {
+  const corr = (label, value) => `<div class="tile"><span>${label}</span><b>${value == null ? "–" : value.toFixed(2)}</b></div>`;
+  const status = {measured: "measured", not_linked: "not linked yet", too_young: "younger than 7 days", no_snapshots_near_day7: "no snapshots near day 7"};
+  return `<p class="sub">${esc(r.note)}</p><div class="tiles">${corr("Overall vs 7-day views", r.spearman_overall)}${corr("Volume vs 7-day views", r.spearman_volume)}${corr("SEO vs 7-day views", r.spearman_seo)}</div>
+    <table><tr><th>Title</th><th>Keyword</th><th>Overall</th><th>Volume</th><th>SEO</th><th>7-day views</th><th>Status</th></tr>${r.rows.map(row => {
+      const p = row.prediction;
+      const link = p.video_id ? `<a href="https://www.youtube.com/watch?v=${p.video_id}" target="_blank">video</a>` : `<input placeholder="video link" data-link-input="${p.id}"> <button class="ghost" data-link="${p.id}">Link</button>`;
+      return `<tr><td>${esc(p.title)}</td><td>${esc(p.keyword || "–")}</td><td class="num">${p.overall ?? "–"}</td><td class="num">${p.volume ?? "–"}</td><td class="num">${p.seo_score}</td><td class="num">${num(row.views_at_7_days)}</td><td>${status[row.status]} · ${link}</td></tr>`;
+    }).join("") || '<tr><td colspan="7" class="sub">No predictions yet.</td></tr>'}</table>`;
+}
+
+function sparkline(points) {
+  if (points.length < 2) return "";
+  const xs = points.map((_, i) => i * 100 / (points.length - 1)), ys = points.map(p => 30 - p.overall * 0.3);
+  return `<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline points="${xs.map((x, i) => `${x},${ys[i]}`).join(" ")}"/></svg>`;
+}
 
 let exportRows = [];
 const csvButton = `<button class="ghost" data-csv>Download CSV</button>`;
-const videoRow = v => ({title: v.title, url: watchUrl(v), channel: v.channel_name, short: v.is_short, views: v.views, views_per_hour: v.views_per_hour && Math.round(v.views_per_hour), age_hours: v.age_hours && Math.round(v.age_hours), outlier: v.outlier_score && +v.outlier_score.toFixed(2), channel_median_views: v.channel_median_views, subscribers: v.channel_subscribers});
+const videoRow = v => ({title: v.title, url: watchUrl(v), channel: v.channel_name, short: v.is_short, views: v.views, views_per_hour: v.views_per_hour && Math.round(v.views_per_hour), views_per_hour_basis: v.views_per_hour_basis,
+  acceleration: v.acceleration && +v.acceleration.toFixed(2), age_hours: v.age_hours && Math.round(v.age_hours), outlier: v.outlier_score && +v.outlier_score.toFixed(2), outlier_low: v.outlier_low && +v.outlier_low.toFixed(2),
+  outlier_high: v.outlier_high && +v.outlier_high.toFixed(2), outlier_confidence: v.outlier_confidence, baseline_videos: v.baseline_videos, same_age_outlier: v.same_age_outlier && +v.same_age_outlier.toFixed(2),
+  channel_median_views: v.channel_median_views, subscribers: v.channel_subscribers});
 
 function downloadCsv() {
   const columns = Object.keys(exportRows[0] || {});
@@ -295,7 +403,14 @@ async function keywordDetail(keyword) {
     const tiles = [["Overall", k.overall], ["Volume", `${k.volume} <small>${level(k.volume)}</small>`], ["Competition", `${k.competition} <small>${level(k.competition)}</small>`], ["Highest views", num(k.highest_views)], ["Average views", num(k.average_views)],
       ["Average subscribers", num(k.average_subscribers)], ["Average age", ago(k.average_age_hours)], ["In title", `${k.in_title}/${k.sample_size}`], ["In description", `${k.in_description}/${k.sample_size}`],
       ["With captions", `${k.with_captions}/${k.sample_size}`], ["Last 7 days", `${k.uploaded_last_7_days}/${k.sample_size}`], ["Results", num(k.estimated_results)]];
-    box.innerHTML = `<h2>Search term: “${esc(k.keyword)}”</h2><div class="tiles">${tiles.map(([label, value]) => `<div class="tile"><span>${label}</span><b>${value}</b></div>`).join("")}</div>
+    const i = k.inputs, t = i.trends;
+    const inputs = [["Demand (top videos' views)", i.demand], ["Autocomplete strength", i.autocomplete], ["Keyword in titles", i.title_match], ["Verified channels", i.verified], ["Channel strength", i.channel_strength]]
+      .map(([label, value]) => `<div class="tile"><span>${label}</span><b>${value == null ? "–" : Math.round(value * 100)}</b></div>`).join("");
+    box.innerHTML = `<h2>Search term: “${esc(k.keyword)}”${arrow(k.trend)} <span class="pill ${k.confidence === "high" ? "good" : k.confidence === "medium" ? "mid" : "bad"}">${k.confidence} confidence · ${k.sample_size} results</span></h2>
+      <div class="tiles">${tiles.map(([label, value]) => `<div class="tile"><span>${label}</span><b>${value}</b></div>`).join("")}${k.estimated_search_views == null ? "" : `<div class="tile"><span>Est. search views (calibrated)</span><b>${num(k.estimated_search_views)}</b></div>`}</div>
+      <h2>What the score is made of</h2><div class="tiles">${inputs}<div class="tile"><span>Views per subscriber (median)</span><b>${i.views_per_subscriber_median == null ? "–" : i.views_per_subscriber_median.toFixed(2)}</b></div>
+        <div class="tile"><span>Google Trends, 90 days <small>unofficial</small></span><b>${t ? `${t.direction} <small>${t.change_percent > 0 ? "+" : ""}${Math.round(t.change_percent)}%</small>` : "–"}</b></div></div>
+      ${k.history.length > 1 ? `<h2>Overall score history</h2><div class="history">${sparkline(k.history)}<span class="sub">${k.history.length} days, ${esc(k.history[0].day)} → ${esc(k.history[k.history.length - 1].day)}</span></div>` : ""}
       <h2>Top channels for this search</h2><div class="chips">${k.top_channels.map(c => `<a class="chip" target="_blank" href="https://www.youtube.com/channel/${c.id}">${esc(c.name)}<small>${num(c.subscribers)} subs · best ${num(c.best_views)} views</small></a>`).join("")}</div>
       <h2>Related keywords</h2><div class="chips">${k.related.map(r => `<span class="chip" data-keyword="${esc(r.keyword)}">${esc(r.keyword)}<small class="${tone(r.overall)}">${r.overall}</small></span>`).join("") || '<span class="sub">None found</span>'}</div>`;
   } catch (error) {
@@ -311,6 +426,22 @@ function seoBlock(seo) {
 function show(name) {
   document.querySelectorAll("nav button[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === name));
   document.querySelectorAll("main section").forEach(s => s.classList.toggle("hidden", s.id !== name));
+  const out = $(`#${name} .out`);
+  if (loaders[name] && !out.innerHTML) loaders[name](out).catch(error => out.innerHTML = `<div class="error">${esc(error.message)}</div>`);
+}
+
+async function act(button, work) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Working…";
+  try {
+    await work();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 
 document.querySelectorAll("nav button[data-view]").forEach(b => b.onclick = () => show(b.dataset.view));
@@ -318,10 +449,10 @@ document.querySelectorAll("nav button[data-view]").forEach(b => b.onclick = () =
 document.querySelectorAll("main section").forEach(section => {
   const form = $("form", section), out = $(".out", section), button = $("button.go", section);
   const saved = JSON.parse(localStorage.getItem("form:" + section.id) || "{}");
-  for (const [name, value] of Object.entries(saved)) if (form[name]) form[name].type === "checkbox" ? form[name].checked = value : form[name].value = value;
+  for (const [name, value] of Object.entries(saved)) if (form[name] && form[name].type !== "file") form[name].type === "checkbox" ? form[name].checked = value : form[name].value = value;
   form.onsubmit = async event => {
     event.preventDefault();
-    localStorage.setItem("form:" + section.id, JSON.stringify(Object.fromEntries([...form.elements].filter(e => e.name).map(e => [e.name, e.type === "checkbox" ? e.checked : e.value]))));
+    localStorage.setItem("form:" + section.id, JSON.stringify(Object.fromEntries([...form.elements].filter(e => e.name && e.type !== "file").map(e => [e.name, e.type === "checkbox" ? e.checked : e.value]))));
     button.disabled = true;
     const started = Date.now();
     out.innerHTML = `<div class="status">Working… reading YouTube</div>`;
@@ -350,6 +481,16 @@ document.addEventListener("click", event => {
     $("#discover form").requestSubmit();
   }
   if (event.target.closest("[data-csv]")) downloadCsv();
+  const track = event.target.closest("[data-track]");
+  if (track) act(track, async () => { await api("track", {target: track.dataset.track}); track.textContent = "Tracking"; });
+  const untrack = event.target.closest("[data-untrack]");
+  if (untrack) act(untrack, async () => { $("#tracking .out").innerHTML = trackedTable(await api("untrack", {target: untrack.dataset.untrack})); });
+  if (event.target.closest("[data-action=tracking_pass]")) act(event.target, async () => { await api("tracking_pass", {}); $("#tracking .out").innerHTML = trackedTable(await api("tracked", {})); });
+  const link = event.target.closest("[data-link]");
+  if (link) act(link, async () => {
+    const video = $(`[data-link-input="${link.dataset.link}"]`).value;
+    $("#backtest .out").innerHTML = backtestReport(await api("link_prediction", {id: +link.dataset.link, video}));
+  });
   const keyword = event.target.closest("[data-keyword]");
   if (keyword) keywordDetail(keyword.dataset.keyword);
   if (event.target.id === "copy-tags") {
