@@ -18,7 +18,7 @@ Outlier score = a video's views divided by the median views of its channel's rec
 
 ## Install and use
 
-Download `MoonwakeLens.exe` from the latest [release](https://github.com/Majkyy111/MoonwakeLens/releases/latest) and run it. It opens its own window (Microsoft Edge app mode) on `http://127.0.0.1:47821` and closes its server when the window closes.
+Download `MoonwakeLens.exe` from the latest [release](https://github.com/Majkyy111/MoonwakeLens/releases/) and run it. It opens its own window (Microsoft Edge app mode) on `http://127.0.0.1:47821` and closes its server when the window closes.
 
 It updates itself: on every start it checks the latest GitHub release and swaps in the new version. The Update button in the sidebar does the same while it is open.
 
